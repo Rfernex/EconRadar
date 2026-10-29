@@ -1,0 +1,68 @@
+/* Shared interaction layer. Colours, typography and layout belong to each app. */
+:root { --ui-ease: cubic-bezier(.2,.8,.2,1); }
+
+body :is(.navbtn, .nav-link, .tabbar button, #topics button, .iconbtn,
+  .icon-button, .addbtn, .all-apps-link, a.app, a.brand) {
+  transition: translate 220ms var(--ui-ease), scale 180ms var(--ui-ease),
+    box-shadow 220ms var(--ui-ease), background-color 180ms ease,
+    border-color 180ms ease, color 180ms ease;
+}
+body :is(.navbtn, .nav-link, .tabbar button, .iconbtn, .icon-button, .addbtn) svg,
+body .tab-icon, body a.app img, body a.brand img {
+  transform-origin: center;
+  transition: translate 260ms var(--ui-ease), rotate 300ms var(--ui-ease),
+    scale 260ms var(--ui-ease);
+}
+body .tab-icon { display: inline-block; }
+
+/* Fine pointers get a small lift; touch keeps the same stable hit targets. */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  body :is(.navbtn, .nav-link, #topics button):not(:disabled):hover { translate: 2px 0; }
+  body :is(.tabbar button, .iconbtn, .icon-button, .addbtn, .all-apps-link):not(:disabled):hover { translate: 0 -2px; }
+  body :is(.navbtn, .nav-link, .tabbar button):hover :is(svg, .tab-icon) {
+    rotate: -6deg; scale: 1.12;
+  }
+  body :is(.iconbtn, .icon-button, .addbtn):hover svg { scale: 1.12; }
+  body a.app:hover { translate: 0 -4px; box-shadow: 0 12px 24px -18px currentColor; }
+  body :is(a.app, a.brand):hover img { rotate: -4deg; scale: 1.06; }
+}
+
+/* Keyboard focus gets the same icon feedback, plus a visible ring. */
+body :is(.navbtn, .nav-link, .tabbar button, #topics button, .iconbtn,
+  .icon-button, .addbtn, .all-apps-link, a.app, a.brand):focus-visible {
+  outline: 2px solid currentColor; outline-offset: 3px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  body :is(.navbtn, .nav-link, .tabbar button):focus-visible :is(svg, .tab-icon) { scale: 1.12; }
+  body :is(.navbtn, .nav-link, .tabbar button, #topics button, .iconbtn,
+    .icon-button, .addbtn, .all-apps-link, a.app):not(:disabled):not([aria-disabled="true"]):active {
+    scale: .97;
+  }
+  body :is(.navbtn[aria-current="page"], .nav-link.active, .tabbar button.active,
+    .tabbar button[aria-current="page"]) :is(svg, .tab-icon) {
+    animation: ui-icon-settle 320ms var(--ui-ease);
+  }
+  body dialog[open] {
+    animation: ui-surface-in 240ms var(--ui-ease);
+  }
+  body details[open] > :not(summary) { animation: ui-disclosure-in 200ms ease-out; }
+}
+@keyframes ui-icon-settle {
+  0% { translate: 0 2px; scale: .9; }
+  60% { translate: 0 -1px; scale: 1.13; }
+  100% { translate: 0 0; scale: 1; }
+}
+@keyframes ui-surface-in {
+  from { opacity: .5; translate: 0 8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes ui-disclosure-in { from { opacity: .5; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  body :is(.navbtn, .nav-link, .tabbar button, #topics button, .iconbtn,
+    .icon-button, .addbtn, .all-apps-link, a.app, a.brand),
+  body :is(.navbtn, .nav-link, .tabbar button, .iconbtn, .icon-button, .addbtn) svg,
+  body .tab-icon, body a.app img, body a.brand img {
+    transition: none;
+  }
+}
