@@ -32,7 +32,7 @@ New papers from the top economics journals (and a few beyond economics), collect
 | `OPENALEX_API_KEY` | secret | Optional, free from openalex.org/settings/api. Without it the collector shares OpenAlex's small keyless daily budget with every GitHub runner on the same IP. |
 | `RADAR_MODEL` | variable | Claude model; default `claude-opus-5-5`. `claude-haiku-5-5` costs about 1/40th. |
 
-**Cost** with Claude Opus 5.5 at low effort: roughly 3–4 cents a paper, so about 60 papers a week ≈ $2/week. Re-summarising the ~1,400 seeded papers once ≈ $40–50 (Haiku 5.5: about $1). Start that catch-up from **Actions → Literature Radar → Run workflow** with “papers to re-summarise” = 1500.
+**Cost** with Claude Opus 5.5 at low effort: roughly 3–4 cents a paper, so about 60 papers a week ≈ $2/week. Re-summarising the ~1,400 seeded papers once ≈ $40–50 (Haiku 5.5: about $1). Start that catch-up from **Actions → Literature Radar → Run workflow** with “papers to re-summarise” = 1500. A run stops starting new summaries after 80 minutes (`--time-budget`) and saves what it has; the rest wait for the next run. A new Anthropic account has low rate limits, so expect to start it two or three times.
 
 ### Running it by hand
 

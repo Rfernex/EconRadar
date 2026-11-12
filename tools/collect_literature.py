@@ -433,8 +433,12 @@ def stored(c):
     return record
 
 
-def enrich_all(items, provider, tax, stats):
-    """items: list of (record, abstract, conclusion, keywords, tldr). Fills record in place."""
+def enrich_all(items, provider, tax, stats, deadline=None, keep_if_late=False):
+    """items: list of (record, abstract, conclusion, keywords, tldr). Fills record in place.
+
+    Past `deadline` (time.monotonic()) no more model calls start: new papers get rule tags,
+    and with keep_if_late (upgrades of old papers) records are left as they were for the
+    next run. This keeps a long catch-up inside the workflow's time limit."""
     def rule_fill(record, abstract, conclusion, keywords, tldr):
         record.update(enrich.rules(record, abstract, conclusion, tax, keywords, tldr))
         if not record['fields']:
@@ -446,9 +450,13 @@ def enrich_all(items, provider, tax, stats):
     def one(item):
         nonlocal stop
         record, abstract, conclusion, keywords, tldr = item
+        late = deadline is not None and time.monotonic() > deadline
+        if late and keep_if_late:
+            stats['deferred'] = stats.get('deferred', 0) + 1
+            return
         record['at'] = now_utc().date().isoformat()
         record['text'] = [k for k, v in (('abstract', abstract), ('conclusion', conclusion)) if v]
-        if provider and not stop:
+        if provider and not stop and not late:
             journal = tax.journals.get(record['journal'], {})
             try:
                 record.update(provider.enrich(enrich.user_message(record, journal, abstract, conclusion)))
@@ -482,6 +490,8 @@ def parse_args(argv):
     p.add_argument('--reenrich', type=int, default=None,
                    help='rule-tagged papers to redo with the model (default 60 with a key, 0 without)')
     p.add_argument('--no-model', action='store_true', help='tag with rules only, even if a key is set')
+    p.add_argument('--time-budget', type=float, default=80,
+                   help='minutes after which no new model calls start (the workflow allows 100)')
     p.add_argument('--dry-run', action='store_true', help='print what would be added; write nothing')
     p.add_argument('--data-dir', default=str(DATA), help=argparse.SUPPRESS)
     return p.parse_args(argv)
@@ -492,6 +502,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     logging.getLogger('pypdf').setLevel(logging.ERROR)
     started = now_utc()
+    deadline = time.monotonic() + args.time_budget * 60
     config = json.loads(CONFIG.read_text())
     tax = enrich.Taxonomy(config)
     store = Store(Path(args.data_dir))
@@ -564,7 +575,7 @@ def main(argv=None):
         record['added'] = added
         records.append(record)
         items.append((record, c['abstract'], texts.get(c['id'], ''), c['_keywords'], c.get('_tldr', '')))
-    enrich_all(items, provider, tax, stats)
+    enrich_all(items, provider, tax, stats, deadline)
 
     # Upgrade earlier rule-tagged papers once a model is available.
     upgraded = 0
@@ -572,14 +583,12 @@ def main(argv=None):
     if provider and budget > 0:
         old = sorted((p for _, p in store.papers() if p.get('by') == 'rules'),
                      key=lambda p: (p['added'], p.get('published', '')), reverse=True)[:budget]
-        redo = []
-        for p in old:
-            conclusion = ''
-            if p.get('pdf'):
-                _, conclusion, _ = read_open_copy([p['pdf']])
-            redo.append((p, p.get('abstract', ''), conclusion, p.get('topics', []), ''))
+        with futures.ProcessPoolExecutor(max_workers=max(1, min(4, (os.cpu_count() or 2) - 1))) as parser, \
+                futures.ThreadPoolExecutor(max_workers=6) as pool:
+            conclusions = list(pool.map(lambda p: read_open_copy([p['pdf']], parser)[1] if p.get('pdf') else '', old))
+        redo = [(p, p.get('abstract', ''), conc, p.get('topics', []), '') for p, conc in zip(old, conclusions)]
         before_llm = stats['llm']
-        enrich_all(redo, provider, tax, stats)
+        enrich_all(redo, provider, tax, stats, deadline, keep_if_late=True)
         upgraded = stats['llm'] - before_llm
         for p, *_ in redo:
             store.touch(p)
@@ -588,7 +597,7 @@ def main(argv=None):
     for r in records:
         per_journal[r['journal']] = per_journal.get(r['journal'], 0) + 1
     run = {'at': now_utc().isoformat(timespec='seconds'), 'since': since, 'added': len(records), 'upgraded': upgraded,
-           'byModel': stats['llm'], 'byRules': stats['rules'], 'failed': stats['llm_failed'],
+           'byModel': stats['llm'], 'byRules': stats['rules'], 'failed': stats['llm_failed'], 'deferred': stats.get('deferred', 0),
            'provider': provider.name if provider else 'rules', 'pdfs': len(texts), 'journals': per_journal,
            'seconds': round((now_utc() - started).total_seconds())}
     if args.dry_run:
@@ -599,8 +608,9 @@ def main(argv=None):
     for r in records:
         store.add(r)
     store.save(run)
-    log.info('Added %d papers (%d by model, %d by rules), upgraded %d; %d papers in the radar',
-             len(records), stats['llm'] - upgraded, stats['rules'], upgraded, store.index['total'])
+    log.info('Added %d papers (%d by model, %d by rules), upgraded %d%s; %d papers in the radar',
+             len(records), stats['llm'] - upgraded, stats['rules'], upgraded,
+             f", {stats['deferred']} left for the next run (time budget)" if stats.get('deferred') else '', store.index['total'])
     return run
 
 

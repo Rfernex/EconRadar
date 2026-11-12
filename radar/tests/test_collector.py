@@ -186,6 +186,26 @@ class Enrichment(unittest.TestCase):
         self.assertEqual(items[0][0]['text'], ['abstract'])
         self.assertEqual(stats, {'llm': 1, 'llm_failed': 1, 'rules': 3})
 
+    def test_past_the_time_budget_upgrades_wait_and_new_papers_get_rules(self):
+        import time as clock
+
+        class Never:
+            name, workers = 'fake-model', 1
+
+            def enrich(self, message):
+                raise AssertionError('no model call after the deadline')
+
+        old = {'id': 'old', 'title': 'Old', 'journal': 'aer', 'authors': [], 'by': 'rules', 'summary': 'kept'}
+        new = {'id': 'new', 'title': 'New', 'journal': 'aer', 'authors': [], 'published': '2026-11-01'}
+        stats = {'llm': 0, 'llm_failed': 0, 'rules': 0}
+        past = clock.monotonic() - 1
+        cl.enrich_all([(old, 'We study x.', '', [], '')], Never(), TAX, stats, past, keep_if_late=True)
+        self.assertEqual(old['summary'], 'kept')
+        self.assertNotIn('at', old)
+        cl.enrich_all([(new, 'We study inflation.', '', [], '')], Never(), TAX, stats, past)
+        self.assertEqual(new['by'], 'rules')
+        self.assertEqual(stats, {'llm': 0, 'llm_failed': 0, 'rules': 1, 'deferred': 1})
+
 
 if __name__ == '__main__':
     unittest.main()
