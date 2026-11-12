@@ -464,10 +464,12 @@ def enrich_all(items, provider, tax, stats, deadline=None, keep_if_late=False):
         if provider and not stop and not late:
             journal = tax.journals.get(record['journal'], {})
             try:
-                record.update(provider.enrich(enrich.user_message(record, journal, abstract, conclusion)))
+                out = provider.enrich(enrich.user_message(record, journal, abstract, conclusion))
+                by = out.pop('by', None) or provider.name
+                record.update(out)
                 if not record['topics'] and keywords:
                     record['topics'] = [k.lower() for k in keywords[:3]]
-                record['by'] = provider.name
+                record['by'] = by
                 stats['llm'] += 1
                 return
             except enrich.QuotaReached as e:
@@ -493,7 +495,7 @@ def parse_args(argv):
     p.add_argument('--limit', type=int, default=0, help='process at most this many new papers')
     p.add_argument('--max-pdfs', type=int, default=250, help='open-access PDFs to read this run')
     p.add_argument('--reenrich', type=int, default=None,
-                   help='rule-tagged papers to redo with the model (default 60 with a key, 0 without)')
+                   help='papers to redo with the model: rule-tagged first, then (with Claude) free-model ones (default 60 with a key, 0 without)')
     p.add_argument('--no-model', action='store_true', help='tag with rules only, even if a key is set')
     p.add_argument('--time-budget', type=float, default=80,
                    help='minutes after which no new model calls start (the workflow allows 100)')
@@ -608,8 +610,13 @@ def main(argv=None):
     upgraded = 0
     budget = args.reenrich if args.reenrich is not None else (60 if provider else 0)
     if provider and budget > 0:
-        old = sorted((p for _, p in store.papers() if p.get('by') == 'rules'),
-                     key=lambda p: (p['added'], p.get('published', '')), reverse=True)[:budget]
+        # Rule-tagged papers first; Claude then also redoes summaries written by free models.
+        newest = lambda rows: sorted(rows, key=lambda p: (p['added'], p.get('published', '')), reverse=True)
+        stored_papers = [p for _, p in store.papers()]
+        old = newest([p for p in stored_papers if p.get('by') == 'rules'])
+        if isinstance(provider, enrich.ClaudeEnricher):
+            old += newest([p for p in stored_papers if str(p.get('by', '')).startswith('openrouter:')])
+        old = old[:budget]
         with futures.ProcessPoolExecutor(max_workers=max(1, min(4, (os.cpu_count() or 2) - 1))) as parser, \
                 futures.ThreadPoolExecutor(max_workers=6) as pool:
             conclusions = list(pool.map(lambda p: read_open_copy([p['pdf']], parser)[1] if p.get('pdf') else '', old))

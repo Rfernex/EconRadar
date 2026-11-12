@@ -228,5 +228,58 @@ class Enrichment(unittest.TestCase):
         self.assertEqual(stats, {'llm': 0, 'llm_failed': 0, 'rules': 1, 'deferred': 1})
 
 
+
+class OpenRouter(unittest.TestCase):
+    """The free-model path, with OpenRouter's API replaced by canned answers."""
+
+    def run_with(self, answers):
+        import io
+        import urllib.error
+        from unittest import mock
+        sent = []
+
+        def fake_urlopen(req, timeout=0):
+            sent.append(json.loads(req.data))
+            answer = answers.pop(0)
+            if isinstance(answer, tuple):  # (status, body) -> HTTP error
+                raise urllib.error.HTTPError(req.full_url, answer[0], 'error', {}, io.BytesIO(json.dumps(answer[1]).encode()))
+            return io.BytesIO(json.dumps(answer).encode())
+
+        provider = enrich.OpenRouterEnricher(TAX, key='sk-or-test')
+        provider._pace = lambda: None
+        for patch in (mock.patch.object(enrich.urllib.request, 'urlopen', fake_urlopen), mock.patch.object(enrich.time, 'sleep', lambda s: None)):
+            patch.start()
+            self.addCleanup(patch.stop)  # stays active until the test ends, so no real request is ever sent
+        return provider, sent, (lambda: provider.enrich('Title: T'))
+
+    def test_answer_records_the_model_that_replied(self):
+        good = {'model': 'google/gemma-4-27b-it:free', 'choices': [{'message': {'content': json.dumps(
+            {'question': 'Q?', 'contribution': 'C.', 'summary': 'S.', 'fields': ['labour'], 'methods': ['iv']})}}]}
+        provider, sent, call = self.run_with([good])
+        out = call()
+        self.assertEqual(out['by'], 'openrouter:google/gemma-4-27b-it:free')
+        self.assertEqual(out['contribution'], 'C.')
+        self.assertEqual(sent[0]['model'], 'openrouter/free')
+        self.assertIn('contribution', sent[0]['messages'][0]['content'])
+
+    def test_daily_limit_stops_the_provider(self):
+        per_day = {'error': {'code': 429, 'message': 'Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day'}}
+        for answer in [(429, per_day), per_day]:  # as an HTTP error, and inside a 200
+            _, _, call = self.run_with([answer])
+            with self.assertRaises(enrich.QuotaReached):
+                call()
+
+    def test_privacy_block_is_explained(self):
+        _, _, call = self.run_with([(404, {'error': {'message': 'No endpoints found matching your data policy'}})])
+        with self.assertRaisesRegex(enrich.QuotaReached, 'settings/privacy'):
+            call()
+
+    def test_a_bad_answer_is_retried_then_given_up(self):
+        bad = {'model': 'x', 'choices': [{'message': {'content': 'no json here'}}]}
+        _, sent, call = self.run_with([bad, bad, bad])
+        with self.assertRaises(enrich.EnrichError):
+            call()
+        self.assertEqual(len(sent), 3)
+
 if __name__ == '__main__':
     unittest.main()

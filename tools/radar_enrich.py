@@ -404,6 +404,18 @@ class OpenRouterEnricher:
                 time.sleep(60 - (now - self.stamps[0]) + 0.5)
             self.stamps.append(time.time())
 
+    @staticmethod
+    def _problem(code, detail):
+        """Turn an OpenRouter error into: stop the run, stop the provider, or retry this paper."""
+        if code in (401, 403):
+            return SystemExit(f'OpenRouter key rejected ({code}): {detail}')
+        if code == 402 or (code == 429 and re.search(r'per[- ]?day|daily', detail, re.I)):
+            return QuotaReached(f'OpenRouter free allowance used up for today ({code}): {detail}')
+        if code == 404 and re.search(r'data policy|privacy|no endpoints', detail, re.I):
+            return QuotaReached('OpenRouter found no free model your privacy settings allow; enable free endpoints at '
+                                f'https://openrouter.ai/settings/privacy ({detail})')
+        return EnrichError(f'OpenRouter {code}: {detail}')
+
     def enrich(self, message):
         body = json.dumps({
             'model': self.model,
@@ -420,15 +432,18 @@ class OpenRouterEnricher:
             try:
                 with urllib.request.urlopen(req, timeout=180) as r:
                     data = json.load(r)
+                if data.get('error'):  # OpenRouter also reports upstream failures inside a 200
+                    err = data['error'] if isinstance(data['error'], dict) else {'message': str(data['error'])}
+                    raise self._problem(int(err.get('code') or 0), clean(err.get('message'), 300))
                 choice = (data.get('choices') or [{}])[0]
-                return validate(parse_json_text((choice.get('message') or {}).get('content')), self.tax)
+                out = validate(parse_json_text((choice.get('message') or {}).get('content')), self.tax)
+                out['by'] = f"openrouter:{data.get('model') or self.model}"  # the free model that answered
+                return out
             except urllib.error.HTTPError as e:
-                detail = e.read()[:300].decode('utf-8', 'replace')
-                if e.code in (401, 403):
-                    raise SystemExit(f'OpenRouter key rejected ({e.code}): {detail}') from e
-                if e.code == 402 or 'daily' in detail.lower():
-                    raise QuotaReached(f'OpenRouter allowance reached: {detail}') from e
-                last = EnrichError(f'OpenRouter {e.code}: {detail}')
+                problem = self._problem(e.code, e.read()[:300].decode('utf-8', 'replace'))
+                if not isinstance(problem, EnrichError):
+                    raise problem from e
+                last = problem
                 time.sleep(5 * (attempt + 1))
             except (EnrichError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
                 last = e if isinstance(e, EnrichError) else EnrichError(str(e))
