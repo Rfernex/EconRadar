@@ -231,6 +231,16 @@ class Enrichment(unittest.TestCase):
 
 class OpenRouter(unittest.TestCase):
     """The free-model path, with OpenRouter's API replaced by canned answers."""
+    MODELS = [
+        {'id': 'google/gemma-4-31b-it:free', 'pricing': {'prompt': '0', 'completion': '0'}, 'context_length': 262144, 'supported_parameters': ['response_format', 'reasoning']},
+        {'id': 'nvidia/nemotron-3.5-super-vl:free', 'pricing': {'prompt': '0', 'completion': '0'}, 'context_length': 1000000, 'supported_parameters': ['structured_outputs', 'response_format', 'reasoning']},
+        {'id': 'baidu/ernie-5.5-flash-preview:free', 'pricing': {'prompt': '0', 'completion': '0'}, 'context_length': 1024000, 'supported_parameters': ['structured_outputs', 'response_format']},
+        {'id': 'liquid/lfm-3-1.7b:free', 'pricing': {'prompt': '0', 'completion': '0'}, 'supported_parameters': ['structured_outputs']},
+        {'id': 'cohere/north-mini-code:free', 'pricing': {'prompt': '0', 'completion': '0'}, 'supported_parameters': []},
+        {'id': 'openrouter/free', 'pricing': {'prompt': '0', 'completion': '0'}, 'supported_parameters': ['structured_outputs']},
+        {'id': 'openai/gpt-6', 'pricing': {'prompt': '0.00001', 'completion': '0.00003'}, 'supported_parameters': ['structured_outputs']},
+    ]
+    GOOD = {'question': 'Q?', 'contribution': 'C.', 'summary': 'S.', 'fields': ['labour'], 'methods': ['iv']}
 
     def run_with(self, answers):
         import io
@@ -245,22 +255,58 @@ class OpenRouter(unittest.TestCase):
                 raise urllib.error.HTTPError(req.full_url, answer[0], 'error', {}, io.BytesIO(json.dumps(answer[1]).encode()))
             return io.BytesIO(json.dumps(answer).encode())
 
-        provider = enrich.OpenRouterEnricher(TAX, key='sk-or-test')
-        provider._pace = lambda: None
         for patch in (mock.patch.object(enrich.urllib.request, 'urlopen', fake_urlopen), mock.patch.object(enrich.time, 'sleep', lambda s: None)):
             patch.start()
             self.addCleanup(patch.stop)  # stays active until the test ends, so no real request is ever sent
+        provider = enrich.OpenRouterEnricher(TAX, key='sk-or-test', models=self.MODELS)
+        provider._pace = lambda: None
         return provider, sent, (lambda: provider.enrich('Title: T'))
 
+    @staticmethod
+    def reply(model, content, finish='stop'):
+        return {'model': model, 'choices': [{'message': {'content': content}, 'finish_reason': finish}]}
+
+    def test_free_models_are_ranked_for_dependable_json(self):
+        ranked = [m['id'] for m in enrich.rank_free_models(self.MODELS)]
+        self.assertEqual(ranked, ['nvidia/nemotron-3.5-super-vl:free', 'baidu/ernie-5.5-flash-preview:free', 'google/gemma-4-31b-it:free'],
+                         'enforced-JSON models first; tiny, code, router and paid models left out')
+
     def test_answer_records_the_model_that_replied(self):
-        good = {'model': 'google/gemma-4-27b-it:free', 'choices': [{'message': {'content': json.dumps(
-            {'question': 'Q?', 'contribution': 'C.', 'summary': 'S.', 'fields': ['labour'], 'methods': ['iv']})}}]}
-        provider, sent, call = self.run_with([good])
+        provider, sent, call = self.run_with([self.reply('nvidia/nemotron-3.5-super-vl:free', json.dumps(self.GOOD))])
         out = call()
-        self.assertEqual(out['by'], 'openrouter:google/gemma-4-27b-it:free')
-        self.assertEqual(out['contribution'], 'C.')
-        self.assertEqual(sent[0]['model'], 'openrouter/free')
-        self.assertIn('contribution', sent[0]['messages'][0]['content'])
+        self.assertEqual(out['by'], 'openrouter:nvidia/nemotron-3.5-super-vl:free')
+        body = sent[0]
+        self.assertEqual(body['model'], 'nvidia/nemotron-3.5-super-vl:free')
+        self.assertEqual(body['response_format']['type'], 'json_schema')
+        self.assertEqual(body['reasoning'], {'effort': 'low'})
+        self.assertEqual(body['provider'], {'require_parameters': True})
+        self.assertIn('contribution', body['messages'][0]['content'])
+
+    def test_a_bad_answer_moves_to_the_next_model(self):
+        provider, sent, call = self.run_with([self.reply('x', '', finish='length'), self.reply('google/gemma-4-31b-it:free', json.dumps(self.GOOD))])
+        out = call()
+        self.assertEqual([b['model'] for b in sent], ['nvidia/nemotron-3.5-super-vl:free', 'baidu/ernie-5.5-flash-preview:free'])
+        self.assertEqual(out['by'], 'openrouter:google/gemma-4-31b-it:free')
+        self.assertEqual(sent[1]['response_format']['type'], 'json_schema')
+        self.assertNotIn('reasoning', sent[1], 'only sent to models that accept it')
+
+    def test_failures_are_explained_and_repeat_offenders_dropped(self):
+        bad = self.reply('x', 'Sure! Here is a summary of the paper', finish='stop')
+        provider, sent, call = self.run_with([bad] * 3 + [bad] * 3)
+        with self.assertRaisesRegex(enrich.EnrichError, r"finish=stop, \d+ chars: 'Sure! Here is a summary"):
+            call()
+        with self.assertRaises(enrich.EnrichError):
+            call()
+        self.assertEqual(provider.dropped, {'nvidia/nemotron-3.5-super-vl:free', 'baidu/ernie-5.5-flash-preview:free', 'google/gemma-4-31b-it:free'})
+
+    def test_many_failed_papers_in_a_row_stop_the_run(self):
+        bad = self.reply('x', 'no json')
+        provider, sent, call = self.run_with([bad] * 30)
+        for _ in range(4):
+            with self.assertRaises(enrich.EnrichError):
+                call()
+        with self.assertRaises(enrich.QuotaReached):
+            call()
 
     def test_daily_limit_stops_the_provider(self):
         per_day = {'error': {'code': 429, 'message': 'Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day'}}
@@ -274,12 +320,6 @@ class OpenRouter(unittest.TestCase):
         with self.assertRaisesRegex(enrich.QuotaReached, 'settings/privacy'):
             call()
 
-    def test_a_bad_answer_is_retried_then_given_up(self):
-        bad = {'model': 'x', 'choices': [{'message': {'content': 'no json here'}}]}
-        _, sent, call = self.run_with([bad, bad, bad])
-        with self.assertRaises(enrich.EnrichError):
-            call()
-        self.assertEqual(len(sent), 3)
 
 if __name__ == '__main__':
     unittest.main()

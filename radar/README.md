@@ -28,7 +28,7 @@ New papers from the top economics journals and NBER working papers (and a few jo
 | Name | Kind | What for |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | secret | Model summaries with Claude (recommended). |
-| `OPENROUTER_API_KEY` | secret | Alternative: OpenRouter's free models, used only when there is no Anthropic key. About 50 summaries a day (1,000 once $10 of credit has ever been bought): each run summarises its new papers first, and stops calling once the day's allowance is used. Free endpoints must be allowed at openrouter.ai/settings/privacy. When an Anthropic key is added later, Claude redoes these summaries after the rule-tagged ones. |
+| `OPENROUTER_API_KEY` | secret | Alternative: OpenRouter's free models, used only when there is no Anthropic key. About 50 summaries a day (1,000 once $10 of credit has ever been bought): each run summarises its new papers first, and stops calling once the day's allowance is used. Free endpoints must be allowed at openrouter.ai/settings/privacy. The collector ranks the live free-model list (models that enforce JSON first), moves to the next model when an answer is unusable, and stops for the run after 5 papers in a row fail, to save the allowance. `RADAR_OPENROUTER_MODEL` pins one model. When an Anthropic key is added later, Claude redoes these summaries after the rule-tagged ones. |
 | `OPENALEX_API_KEY` | secret | Optional, free from openalex.org/settings/api. Without it the collector shares OpenAlex's small keyless daily budget with every GitHub runner on the same IP. |
 | `RADAR_MODEL` | variable | Claude model; default `claude-opus-5-5`. `claude-haiku-5-5` costs about 1/40th. |
 

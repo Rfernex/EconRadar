@@ -379,21 +379,74 @@ class ClaudeEnricher:
         return validate(parse_json_text(text), self.tax)
 
 
+# Free models are many, change often and vary a lot in how reliably they return JSON. Rank
+# the live list: enforced JSON (structured outputs) first, then JSON mode, then the rest;
+# within each, the families the other apps on this site prefer (shared/openrouter.mjs).
+OPENROUTER_PREFER = ['gemma-4-31b', 'nemotron-3.5-super', 'nemotron-3-super', 'gemma-4', 'deepseek', 'qwen3', 'llama-4',
+                     'gpt-oss', 'ernie', 'glm', 'kimi', 'mistral', 'dots', 'nemotron']
+OPENROUTER_SKIP = re.compile(r'content-safety|guard|lyria|embed|tts|whisper|rerank|\bxs\b|code|inkling|nano|audio|image', re.I)
+
+
+def model_size(model_id):
+    m = re.search(r'(\d+(?:\.\d+)?)b\b', model_id.split('/')[-1])
+    return float(m.group(1)) if m else None
+
+
+def rank_free_models(models):
+    """OpenRouter /models entries -> free text models, most dependable for JSON first."""
+    ranked = []
+    for m in models:
+        mid = m.get('id', '')
+        price = m.get('pricing') or {}
+        try:
+            free = mid.endswith(':free') or (float(price.get('prompt') or 1) == 0 and float(price.get('completion') or 1) == 0)
+        except ValueError:
+            free = False
+        size = model_size(mid)
+        if not free or mid == 'openrouter/free' or OPENROUTER_SKIP.search(mid) or (size is not None and size < 8):
+            continue
+        params = set(m.get('supported_parameters') or [])
+        json_tier = 0 if 'structured_outputs' in params else 1 if 'response_format' in params else 2
+        prefer = next((i for i, p in enumerate(OPENROUTER_PREFER) if p in mid), len(OPENROUTER_PREFER))
+        ranked.append(((json_tier, prefer, -(m.get('context_length') or 0)), {
+            'id': mid, 'structured': json_tier == 0, 'json_mode': json_tier <= 1, 'reasoning': 'reasoning' in params}))
+    return [m for _, m in sorted(ranked, key=lambda r: r[0])]
+
+
 class OpenRouterEnricher:
     URL = 'https://openrouter.ai/api/v1/chat/completions'
+    MODELS_URL = 'https://openrouter.ai/api/v1/models'
 
-    def __init__(self, tax, vocabulary=(), model=None, key=None):
+    def __init__(self, tax, vocabulary=(), model=None, key=None, models=None):
         self.key = key or os.environ['OPENROUTER_API_KEY']
-        self.model = model or os.environ.get('RADAR_OPENROUTER_MODEL') or 'openrouter/free'
-        self.name = f'openrouter:{self.model}'
         self.tax = tax
-        keys = ', '.join(output_schema(tax)['properties'])
+        self.schema = output_schema(tax)
+        keys = ', '.join(self.schema['properties'])
         self.system = system_prompt(tax, vocabulary) + (
             f'\n\nAnswer with one JSON object and nothing else. Keys: {keys}. '
             'fields, methods, data_types, topics, geography and jel are arrays of strings; the rest are strings.')
+        pinned = model or os.environ.get('RADAR_OPENROUTER_MODEL')
+        if pinned:
+            self.models = [{'id': pinned, 'structured': False, 'json_mode': True, 'reasoning': False}]
+        else:
+            self.models = rank_free_models(models if models is not None else self._live_models())
+        # The router is the last resort: it picks any free model, JSON or not.
+        self.models.append({'id': 'openrouter/free', 'structured': False, 'json_mode': True, 'reasoning': False})
+        self.name = 'openrouter:' + self.models[0]['id']
         self.workers = 1
         self.lock = threading.Lock()
         self.stamps = []
+        self.failures = {}       # model id -> consecutive failed answers
+        self.dropped = set()     # models failing repeatedly, not tried again this run
+        self.papers_failed = 0   # consecutive papers no model could summarise
+
+    def _live_models(self):
+        try:
+            req = urllib.request.Request(self.MODELS_URL, headers={'User-Agent': 'LiteratureRadar/1.0'})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.load(r).get('data') or []
+        except Exception:
+            return []
 
     def _pace(self):
         # Free models allow about 20 requests a minute; stay under 15.
@@ -406,48 +459,77 @@ class OpenRouterEnricher:
 
     @staticmethod
     def _problem(code, detail):
-        """Turn an OpenRouter error into: stop the run, stop the provider, or retry this paper."""
+        """Turn an OpenRouter error into: stop the run, stop the provider, or try another model."""
         if code in (401, 403):
             return SystemExit(f'OpenRouter key rejected ({code}): {detail}')
         if code == 402 or (code == 429 and re.search(r'per[- ]?day|daily', detail, re.I)):
             return QuotaReached(f'OpenRouter free allowance used up for today ({code}): {detail}')
-        if code == 404 and re.search(r'data policy|privacy|no endpoints', detail, re.I):
+        if code == 404 and re.search(r'data policy|privacy', detail, re.I):
             return QuotaReached('OpenRouter found no free model your privacy settings allow; enable free endpoints at '
                                 f'https://openrouter.ai/settings/privacy ({detail})')
         return EnrichError(f'OpenRouter {code}: {detail}')
 
-    def enrich(self, message):
-        body = json.dumps({
-            'model': self.model,
+    def _body(self, model, message):
+        body = {
+            'model': model['id'],
             'messages': [{'role': 'system', 'content': self.system}, {'role': 'user', 'content': message}],
-            'response_format': {'type': 'json_object'},
-            'max_tokens': 4000,
-        }).encode()
+            'max_tokens': 6000,
+        }
+        if model['structured']:
+            body['response_format'] = {'type': 'json_schema', 'json_schema': {'name': 'paper', 'strict': True, 'schema': self.schema}}
+        elif model['json_mode']:
+            body['response_format'] = {'type': 'json_object'}
+        if model['reasoning']:
+            body['reasoning'] = {'effort': 'low'}  # thinking models otherwise spend the budget before answering
+        if model['id'] != 'openrouter/free':
+            body['provider'] = {'require_parameters': True}  # only providers that honour the JSON format
+        return json.dumps(body).encode()
+
+    def _fail(self, model, error):
+        n = self.failures.get(model['id'], 0) + 1
+        self.failures[model['id']] = n
+        if n >= 2 and model['id'] != 'openrouter/free':
+            self.dropped.add(model['id'])
+        return error
+
+    def enrich(self, message):
         last = None
-        for attempt in range(3):
+        tried = [m for m in self.models if m['id'] not in self.dropped][:3]
+        for model in tried:
             self._pace()
-            req = urllib.request.Request(self.URL, data=body, headers={
+            req = urllib.request.Request(self.URL, data=self._body(model, message), headers={
                 'Authorization': f'Bearer {self.key}', 'Content-Type': 'application/json',
                 'X-Title': 'Literature Radar'})
+            content, finish = '', ''
             try:
-                with urllib.request.urlopen(req, timeout=180) as r:
+                with urllib.request.urlopen(req, timeout=120) as r:
                     data = json.load(r)
                 if data.get('error'):  # OpenRouter also reports upstream failures inside a 200
                     err = data['error'] if isinstance(data['error'], dict) else {'message': str(data['error'])}
                     raise self._problem(int(err.get('code') or 0), clean(err.get('message'), 300))
                 choice = (data.get('choices') or [{}])[0]
-                out = validate(parse_json_text((choice.get('message') or {}).get('content')), self.tax)
-                out['by'] = f"openrouter:{data.get('model') or self.model}"  # the free model that answered
+                content = (choice.get('message') or {}).get('content') or ''
+                finish = choice.get('finish_reason') or choice.get('native_finish_reason') or ''
+                out = validate(parse_json_text(content), self.tax)
+                out['by'] = f"openrouter:{data.get('model') or model['id']}"
+                self.failures[model['id']] = 0
+                self.papers_failed = 0
                 return out
             except urllib.error.HTTPError as e:
                 problem = self._problem(e.code, e.read()[:300].decode('utf-8', 'replace'))
                 if not isinstance(problem, EnrichError):
                     raise problem from e
-                last = problem
-                time.sleep(5 * (attempt + 1))
-            except (EnrichError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
-                last = e if isinstance(e, EnrichError) else EnrichError(str(e))
-        raise last
+                last = self._fail(model, EnrichError(f"{model['id']}: {problem}"))
+            except EnrichError as e:
+                shown = clean(content, 120)
+                last = self._fail(model, EnrichError(f"{model['id']}: {e} (finish={finish or '?'}, {len(content)} chars{': ' + repr(shown) if shown else ''})"))
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+                last = self._fail(model, EnrichError(f"{model['id']}: {e}"))
+        self.papers_failed += 1
+        if self.papers_failed >= 5:
+            raise QuotaReached(f'Free models failed on {self.papers_failed} papers in a row; '
+                               f'stopping for this run to save the daily allowance (last: {last})')
+        raise last or EnrichError('no free model available')
 
 
 class QuotaReached(Exception):
