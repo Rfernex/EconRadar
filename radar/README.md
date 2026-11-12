@@ -12,13 +12,13 @@ New papers from the top economics journals and NBER working papers (and a few jo
   - **Replay history** rebuilds the network week by week by publication date. Click a node, then one of its ties, to list the papers that combine the two.
 - **Authors**: who is active in what (heat map by field family), sortable by output, recent activity or name; profiles with field/method mix, co-authors and papers. Follow authors to have their new papers flagged.
 - **Trends**: papers per quarter or month by field family; methods, data, topics or fields over time (share of papers, small multiples); what is rising or fading (last 90 days against before); a **frontier log** of firsts (the first time a method or data source shows up in a field since the radar started); the latest research questions.
-- **Filters** (shared by every view): text search, publication date (presets or a range; NBER papers are dated to the month), field or field family, method, data, source (journal or NBER), author, saved, unread, followed authors, model-summarised only. On Latest, the update chips show what one collection added.
+- **Filters** (shared by every view): text search, publication date (presets or a range; NBER papers carry the day NBER released them), field or field family, method, data, source (journal or NBER), author, saved, unread, followed authors, model-summarised only. On Latest, the update chips show what one collection added.
 
 ## Where the papers come from
 
-`tools/collect_literature.py` runs from `.github/workflows/literature-radar.yml` every Monday and Thursday at 05:23 UTC:
+`tools/collect_literature.py` runs from `.github/workflows/literature-radar.yml` every Tuesday and Friday at 05:23 UTC (NBER releases its new working papers on Monday evenings, so they arrive the next morning):
 
-1. **OpenAlex** lists articles in the journals of `config.json`, and NBER working papers, published in the last 60 days and not yet stored (authors with stable ids, institutions, abstracts). NBER papers are read from NBER's own open PDFs.
+1. **OpenAlex** lists articles in the journals of `config.json` published in the last 60 days and not yet stored (authors with stable ids, institutions, abstracts). **NBER** working papers come from NBER's own listing and paper pages: the day NBER released each one, its full abstract and authors, and its open PDF. OpenAlex misfiles some NBER papers and dates them to a month, so it only adds author ids and institutions, now or on a later run once it has the paper (`"listing": "nber"` in `config.json`).
 2. Missing abstracts come from **Crossref** and **Semantic Scholar**. When a legal open-access PDF exists (arXiv, repositories, open publisher copies), its conclusion section is extracted. Publishers that block scripts (Wiley, OUP, ScienceDirect, SSRN…) are skipped, never worked around.
 3. `tools/radar_enrich.py` writes the question, summary, conclusion, identification strategy, data description, and tags (fields, methods, data types, topics, geography, period, JEL) with **Claude** (`ANTHROPIC_API_KEY`) or **OpenRouter** free models (`OPENROUTER_API_KEY`), validated against the lists in `config.json`. Without a key, keyword rules tag the paper (marked “auto-extracted”); each later run upgrades up to 60 of those once a key exists.
 4. Papers are appended to `data/papers-YYYY-MM.json` (by month added) and `data/index.json` keeps the shard list and the run log. Nothing is ever removed, so the network and trends grow over time. Abstracts are kept as excerpts of at most 180 words with a link to the article; PDF text is never stored.
@@ -41,6 +41,7 @@ python3 tools/collect_literature.py                    # new papers in the 60-da
 python3 tools/collect_literature.py --since 2026-05-01 # backfill
 python3 tools/collect_literature.py --reenrich 200     # upgrade rule-tagged papers (needs a key)
 python3 tools/collect_literature.py --dry-run --limit 5
+python3 tools/collect_literature.py --redate-nber      # stored NBER papers: release day from NBER's pages
 ```
 
 Needs Python 3.12; `pip install pypdf` for conclusions and `pip install anthropic` for Claude.

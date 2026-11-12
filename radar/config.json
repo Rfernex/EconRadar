@@ -133,6 +133,6 @@
     {"key": "ajps", "short": "AJPS", "name": "American Journal of Political Science", "openalex": "S90314269", "issn": "0092-5853", "group": "beyond", "fields": ["political-science"], "enabled": true},
     {"key": "asr", "short": "ASR", "name": "American Sociological Review", "openalex": "S157620343", "issn": "0003-1224", "group": "beyond", "fields": ["sociology"], "enabled": true},
     {"key": "nhb", "short": "Nat. Hum. Behav.", "name": "Nature Human Behaviour", "openalex": "S2764866340", "issn": "2397-3374", "group": "beyond", "fields": ["psychology"], "enabled": true},
-    {"key": "nber", "short": "NBER WP", "name": "NBER Working Papers", "openalex": "S2809516038", "issn": "0898-2937", "group": "working", "kind": "working", "pdfTemplate": "https://www.nber.org/system/files/working_papers/{id}/{id}.pdf", "fields": [], "enabled": true}
+    {"key": "nber", "short": "NBER WP", "name": "NBER Working Papers", "openalex": "S2809516038", "listing": "nber", "issn": "0898-2937", "group": "working", "kind": "working", "pdfTemplate": "https://www.nber.org/system/files/working_papers/{id}/{id}.pdf", "fields": [], "enabled": true}
   ]
 }

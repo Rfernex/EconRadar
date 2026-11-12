@@ -1,15 +1,18 @@
 """Literature Radar collector: new articles from the journals in radar/config.json.
 
-Runs twice a week from .github/workflows/literature-radar.yml (Monday and Thursday)
+Runs twice a week from .github/workflows/literature-radar.yml (Tuesday and Friday)
 and by hand from the repository root:
 
     python3 tools/collect_literature.py                    # new papers in the lookback window
     python3 tools/collect_literature.py --since 2026-05-01 # backfill from a date
     python3 tools/collect_literature.py --reenrich 200     # upgrade rule-tagged papers
     python3 tools/collect_literature.py --dry-run --limit 5
+    python3 tools/collect_literature.py --redate-nber      # stored NBER papers: release day from NBER
 
-Sources: OpenAlex finds the papers (authors with stable ids, institutions,
-abstracts); Crossref and Semantic Scholar fill missing abstracts and open-access
+Sources: OpenAlex finds the journal articles (authors with stable ids,
+institutions, abstracts). NBER working papers come from NBER's own listing and paper
+pages (the release day, full abstract and authors; OpenAlex adds author ids when it
+has the paper). Crossref and Semantic Scholar fill missing abstracts and open-access
 links; legal open-access PDFs (arXiv, repositories, open publisher copies) supply
 the conclusion section. Hosts that refuse automated downloads are skipped, never
 worked around. Summaries and tags come from tools/radar_enrich.py.
@@ -29,6 +32,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -178,9 +182,9 @@ def restore_abstract(index):
     return clean(' '.join(words[i] for i in sorted(words)))
 
 
-def candidate(work, journals):
+def candidate(work, journals, journal=None):
     source = (((work.get('primary_location') or {}).get('source') or {}).get('id') or '').split('/')[-1]
-    journal = journals.get(source)
+    journal = journal or journals.get(source)
     if not journal:
         return None
     doi = (work.get('doi') or '').replace('https://doi.org/', '').lower()
@@ -232,6 +236,188 @@ def is_research(c):
 
 
 # ---------------------------------------------------------------------------
+# NBER working papers, from NBER's own site
+# ---------------------------------------------------------------------------
+# OpenAlex files some NBER papers under other sources and dates them to a month (sometimes
+# the wrong one), so NBER is read directly: the listing finds every new paper and each paper
+# page gives the day NBER released it (a batch every Monday), the full abstract and the
+# authors. OpenAlex, when it already has the paper, adds author ids and institutions.
+NBER = 'https://www.nber.org'
+NBER_LISTING = f'{NBER}/api/v1/working_page_listing/contentType/working_paper/_/_/search'
+MONTHS = {m: i for i, m in enumerate(('january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+                                      'september', 'october', 'november', 'december'), 1)}
+NAME_SUFFIX = {'jr', 'sr', 'ii', 'iii', 'iv'}
+
+
+def listing_month(label):
+    m = re.match(r'\s*([A-Za-z]+)\s+(\d{4})', label or '')
+    month = MONTHS.get(m.group(1).lower()) if m else None
+    return f'{m.group(2)}-{month:02d}' if month else ''
+
+
+def nber_listing(since, max_pages=20):
+    """NBER working papers, newest first, back to the month of `since` (the listing gives months only)."""
+    floor, rows = since[:7], []
+    for page in range(1, max_pages + 1):
+        query = urlencode({'page': page, 'perPage': 100, 'sortBy': 'public_date'})
+        results = get_json(f'{NBER_LISTING}?{query}', retries=3).get('results') or []
+        recent = 0
+        for r in results:
+            number = re.search(r'/papers/(w\d+)$', r.get('url') or '')
+            month = listing_month(r.get('displaydate'))
+            if not number or (month and month < floor):
+                continue
+            recent += 1
+            rows.append({'number': number.group(1), 'title': clean(r.get('title')), 'month': month,
+                         'authors': [a for a in (clean(x) for x in r.get('authors') or []) if a],
+                         'abstract': clean(r.get('abstract'))})
+        if len(results) < 100 or not recent:
+            break
+    return rows
+
+
+def parse_nber_page(page):
+    def meta(name):
+        return [clean(v) for v in re.findall(rf'<meta\s+name="{name}"\s+content="([^"]*)"', page)]
+    day = re.match(r'(\d{4})/(\d{2})/(\d{2})$', (meta('citation_publication_date') or [''])[0])
+    intro = re.search(r'class="page-header__intro-inner">(.*?)</div>', page, re.S)
+    return {'date': '-'.join(day.groups()) if day else '',
+            'title': (meta('citation_title') or [''])[0],
+            'authors': [a for a in meta('citation_author') if a],
+            'abstract': strip_label(clean(intro.group(1))) if intro else '',
+            'pdf': (meta('citation_pdf_url') or [''])[0]}
+
+
+def nber_page(number):
+    """Release day, title, authors, abstract and PDF address from an NBER paper page ({} if unreadable)."""
+    try:
+        body = fetch(f'{NBER}/papers/{number}', headers={'Accept': 'text/html'}, retries=2, timeout=30, max_bytes=3_000_000)
+    except Exception as e:
+        log.warning('NBER page %s unreadable (%s)', number, e)
+        return {}
+    return parse_nber_page(body.decode('utf-8', 'replace'))
+
+
+def openalex_by_doi(dois, key=''):
+    """OpenAlex records for these DOIs, keyed by DOI; DOIs OpenAlex does not have yet are absent."""
+    found = {}
+    for i in range(0, len(dois), 50):
+        params = {'filter': 'doi:' + '|'.join(dois[i:i + 50]), 'per_page': '50', 'select': SELECT}
+        if key:
+            params['api_key'] = key
+        try:
+            page = get_json(f'{OPENALEX}?{urlencode(params)}', retries=3)
+        except Exception as e:
+            log.warning('OpenAlex DOI lookup failed (%s); those NBER authors stay without ids for now', e)
+            break
+        for w in page.get('results') or []:
+            doi = (w.get('doi') or '').replace('https://doi.org/', '').lower()
+            found.setdefault(doi, w)
+    return found
+
+
+def surname(name):
+    plain = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode().lower()
+    parts = [w for w in re.findall(r'[a-z]+', plain) if w not in NAME_SUFFIX]
+    return parts[-1] if parts else ''
+
+
+def merge_authors(names, rows):
+    """NBER's author list, each name replaced by OpenAlex's record (id, institution) when the surnames match."""
+    pool, out = list(rows), []
+    for name in names:
+        match = next((r for r in pool if surname(r.get('n', '')) == surname(name)), None)
+        if match:
+            pool.remove(match)
+        out.append(match or {'n': name})
+    return out
+
+
+def nber_candidate(entry, page, work, journal):
+    number = entry['number']
+    doi = f'10.3386/{number}'
+    base = candidate(work, {}, journal) if work else {}
+    pdfs = list(base.get('_pdfs') or [])
+    for url in (page.get('pdf'), journal['pdfTemplate'].replace('{id}', number) if journal.get('pdfTemplate') else ''):
+        if url and url not in pdfs:
+            pdfs.insert(0, url)
+    month_start = f"{entry['month']}-01" if entry.get('month') else ''
+    return {
+        'id': base.get('id') or f'nber-{number}',
+        'doi': doi,
+        'title': page.get('title') or entry['title'] or base.get('title', ''),
+        'journal': journal['key'],
+        'published': page.get('date') or month_start or base.get('published', ''),
+        'authors': merge_authors(page.get('authors') or entry['authors'] or [a['n'] for a in base.get('authors', [])],
+                                 base.get('authors', []))[:30],
+        'abstract': page.get('abstract') or base.get('abstract', ''),
+        'url': f'https://doi.org/{doi}',
+        'kind': 'working',
+        '_pdfs': pdfs,
+        '_keywords': base.get('_keywords', []),
+        '_pages': (None, None),
+        '_group': journal.get('group'),
+        '_short': f"{entry['abstract']} …" if entry.get('abstract') else '',
+    }
+
+
+def collect_nber(journal, since, known_ids, stored_by_doi, key=''):
+    """New NBER papers released since `since`, and stored NBER papers that gained OpenAlex author ids."""
+    try:
+        listing = nber_listing(since)
+    except Exception as e:
+        log.warning('NBER listing unavailable (%s); its new papers wait for the next run', e)
+        return [], []
+    new = [e for e in listing if f"10.3386/{e['number']}" not in stored_by_doi]
+    with futures.ThreadPoolExecutor(max_workers=3) as pool:
+        pages = list(pool.map(lambda e: nber_page(e['number']), new))
+    # Papers stored before OpenAlex had them: their authors get ids once it does.
+    lacking = [p for p in (stored_by_doi.get(f"10.3386/{e['number']}") for e in listing)
+               if p and any(not a.get('id') for a in p.get('authors', []))]
+    works = openalex_by_doi([f"10.3386/{e['number']}" for e in new] + [p['doi'] for p in lacking], key)
+    touched = []
+    for p in lacking:
+        if p['doi'] in works:
+            merged = merge_authors([a['n'] for a in p['authors']], candidate(works[p['doi']], {}, journal)['authors'])
+            if sum('id' in a for a in merged) > sum('id' in a for a in p['authors']):
+                p['authors'] = merged
+                touched.append(p)
+    cands = []
+    for e, page in zip(new, pages):
+        c = nber_candidate(e, page, works.get(f"10.3386/{e['number']}"), journal)
+        if c['id'] in known_ids or (c['published'] and c['published'] < since):
+            continue
+        cands.append(c)
+    log.info('NBER: %d papers listed since %s; %d new (%d dated from their page, %d already in OpenAlex); '
+             'author ids added to %d stored papers', len(listing), since[:7], len(cands),
+             sum(bool(p.get('date')) for p in pages), sum(f"10.3386/{e['number']}" in works for e in new), len(touched))
+    return cands, touched
+
+
+def redate_nber(store):
+    """Give stored NBER papers the day NBER released them (and the full abstract when theirs is cut short)."""
+    rows = [p for _, p in store.papers() if p.get('journal') == 'nber' and str(p.get('doi', '')).startswith('10.3386/')]
+    with futures.ThreadPoolExecutor(max_workers=3) as pool:
+        pages = list(pool.map(lambda p: nber_page(p['doi'].split('/')[-1]), rows))
+    dated = longer = 0
+    for p, page in zip(rows, pages):
+        changed = False
+        if page.get('date') and page['date'] != p.get('published'):
+            p['published'] = page['date']
+            dated += 1
+            changed = True
+        if page.get('abstract') and len(p.get('abstract') or '') < 300 and len(page['abstract']) > len(p.get('abstract') or ''):
+            p['abstract'] = excerpt(page['abstract'])
+            longer += 1
+            changed = True
+        if changed:
+            store.touch(p)
+    log.info('NBER: %d stored papers checked, %d pages read; %d redated, %d abstracts completed',
+             len(rows), sum(bool(x) for x in pages), dated, longer)
+    return dated, longer
+
+
+# ---------------------------------------------------------------------------
 # Missing abstracts and open-access copies
 # ---------------------------------------------------------------------------
 def crossref_abstract(doi):
@@ -243,8 +429,8 @@ def crossref_abstract(doi):
 
 
 def fill_from_crossref(cands):
-    # Elsevier (10.1016) does not deposit abstracts with Crossref; skip those lookups.
-    todo = [c for c in cands if not c['abstract'] and c['doi'] and not c['doi'].startswith('10.1016/')]
+    # Elsevier (10.1016) and NBER (10.3386) do not deposit abstracts with Crossref; skip those lookups.
+    todo = [c for c in cands if not c['abstract'] and c['doi'] and not c['doi'].startswith(('10.1016/', '10.3386/'))]
     with futures.ThreadPoolExecutor(max_workers=4) as pool:
         for c, text in zip(todo, pool.map(lambda c: crossref_abstract(c['doi']), todo)):
             if len(text) > 120:
@@ -502,6 +688,8 @@ def parse_args(argv):
     p.add_argument('--dry-run', action='store_true', help='print what would be added; write nothing')
     p.add_argument('--retag-rules', action='store_true',
                    help='rebuild question, summary, contribution and identification of stored rule-tagged papers, then stop')
+    p.add_argument('--redate-nber', action='store_true',
+                   help='give stored NBER papers the day NBER released them (from their pages), then stop')
     p.add_argument('--data-dir', default=str(DATA), help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
@@ -528,14 +716,21 @@ def main(argv=None):
         store.save()
         log.info('Rebuilt the text lines of %d rule-tagged papers', done)
         return None
+    if args.redate_nber:
+        store = Store(Path(args.data_dir))
+        redate_nber(store)
+        store.save()
+        return None
     deadline = time.monotonic() + args.time_budget * 60
     config = json.loads(CONFIG.read_text())
     tax = enrich.Taxonomy(config)
     store = Store(Path(args.data_dir))
     journals = {j['openalex']: j for j in config['journals'] if j.get('enabled', True)}
+    listed = [j for j in journals.values() if j.get('listing') == 'nber']  # read from NBER's own site
     since = args.since or (started.date() - timedelta(days=config.get('lookbackDays', 60))).isoformat()
+    key = os.environ.get('OPENALEX_API_KEY', '')
 
-    works = openalex_works(list(journals), since, os.environ.get('OPENALEX_API_KEY', ''))
+    works = openalex_works([s for s, j in journals.items() if j not in listed], since, key)
     known_ids, known_dois = store.known()
     cands, skipped = [], 0
     for w in works:
@@ -552,11 +747,22 @@ def main(argv=None):
         if c['doi']:
             known_dois.add(c['doi'])
         cands.append(c)
+    log.info('OpenAlex: %d works since %s; %d new research papers (%d non-research items skipped)',
+             len(works), since, len(cands), skipped)
+    stored_by_doi = {p['doi']: p for _, p in store.papers() if p.get('doi')}
+    for journal in listed:
+        found, touched = collect_nber(journal, since, known_ids, stored_by_doi, key)
+        for c in found:
+            if c['doi'] in known_dois or not is_research(c):
+                continue
+            known_ids.add(c['id'])
+            known_dois.add(c['doi'])
+            cands.append(c)
+        for p in touched:
+            store.touch(p)
     cands.sort(key=lambda c: c['published'], reverse=True)
     if args.limit:
         cands = cands[:args.limit]
-    log.info('OpenAlex: %d works since %s; %d new research papers (%d non-research items skipped)',
-             len(works), since, len(cands), skipped)
 
     if cands:
         fill_from_crossref(cands)
@@ -586,6 +792,9 @@ def main(argv=None):
                     c['abstract'] = pdf_abstract
     log.info('Open-access PDFs read: %d of %d tried; conclusions found: %d',
              len(texts), len(with_pdf), sum(bool(t) for t in texts.values()))
+    for c in cands:  # last resort: the listing's opening lines of the abstract
+        if not c['abstract'] and c.get('_short'):
+            c['abstract'] = c['_short']
 
     # Outside economics, an item with no abstract and no text is usually a comment or news piece.
     before = len(cands)

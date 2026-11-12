@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -124,6 +125,98 @@ class Collector(unittest.TestCase):
     def test_excerpt_is_capped(self):
         self.assertTrue(cl.excerpt('word ' * 300).endswith('…'))
         self.assertEqual(len(cl.excerpt('word ' * 300).split()), 181)
+
+
+NBER_PAGE = """<html><head>
+<meta name="citation_title" content="Prices &amp; Wages: New Evidence" />
+<meta name="citation_doi" content="10.3386/w36010" />
+<meta name="citation_author" content="Ada Lovelace" />
+<meta name="citation_author" content="José Núñez Jr." />
+<meta name="citation_publication_date" content="2026/11/09" />
+<meta name="citation_pdf_url" content="https://www.nber.org/system/files/working_papers/w36010/w36010.pdf" />
+</head><body><div class="page-header__intro-inner">
+      <p>
+Abstract: We study wages and prices in 40 countries.
+</p>
+          </div></body></html>"""
+
+
+def listed(number='w36010', month='2026-11', **over):
+    row = {'number': number, 'title': 'Prices and Wages', 'month': month, 'authors': ['Ada Lovelace'],
+           'abstract': 'We study wages and prices in'}
+    row.update(over)
+    return row
+
+
+class Nber(unittest.TestCase):
+    journal = next(j for j in CONFIG['journals'] if j['key'] == 'nber')
+
+    def test_nber_is_read_from_its_own_site(self):
+        self.assertEqual(self.journal.get('listing'), 'nber', 'OpenAlex misfiles and misdates NBER papers')
+
+    def test_paper_page_gives_the_release_day_and_full_abstract(self):
+        page = cl.parse_nber_page(NBER_PAGE)
+        self.assertEqual(page['date'], '2026-11-09')
+        self.assertEqual(page['title'], 'Prices & Wages: New Evidence')
+        self.assertEqual(page['authors'], ['Ada Lovelace', 'José Núñez Jr.'])
+        self.assertEqual(page['abstract'], 'We study wages and prices in 40 countries.')
+        self.assertEqual(cl.parse_nber_page('<html>maintenance</html>')['date'], '')
+        self.assertEqual(cl.listing_month('November 2026'), '2026-11')
+        self.assertEqual(cl.listing_month(''), '')
+
+    def test_authors_take_openalex_ids_when_surnames_match(self):
+        rows = [{'n': 'Jose Nunez', 'id': 'A7', 'inst': 'UCM'}, {'n': 'A. Lovelace', 'id': 'A1'}]
+        merged = cl.merge_authors(['Ada Lovelace', 'José Núñez Jr.', 'Grace Hopper'], rows)
+        self.assertEqual([a.get('id') for a in merged], ['A1', 'A7', None])
+        self.assertEqual(merged[2], {'n': 'Grace Hopper'})
+
+    def test_candidate_before_openalex_has_the_paper(self):
+        c = cl.nber_candidate(listed(), cl.parse_nber_page(NBER_PAGE), None, self.journal)
+        self.assertEqual((c['id'], c['doi'], c['journal'], c['kind']), ('nber-w36010', '10.3386/w36010', 'nber', 'working'))
+        self.assertEqual(c['published'], '2026-11-09')
+        self.assertEqual(c['_pdfs'], ['https://www.nber.org/system/files/working_papers/w36010/w36010.pdf'])
+        self.assertTrue(cl.is_research(c))
+        bare = cl.nber_candidate(listed(), {}, None, self.journal)
+        self.assertEqual(bare['published'], '2026-11-01', 'no page: the listing month')
+        self.assertEqual((bare['abstract'], bare['_short']), ('', 'We study wages and prices in …'))
+
+    def test_candidate_keeps_nber_date_over_a_misfiled_openalex_record(self):
+        w = work(id='https://openalex.org/W77', doi='https://doi.org/10.3386/w36010', type='report', publication_date='2026-01-01',
+                 primary_location={'source': {'id': 'https://openalex.org/S7407053623'}})
+        c = cl.nber_candidate(listed(), cl.parse_nber_page(NBER_PAGE), w, self.journal)
+        self.assertEqual((c['id'], c['journal'], c['published']), ('W77', 'nber', '2026-11-09'))
+        self.assertEqual(c['authors'][0]['id'], 'A1')
+        self.assertEqual(c['_pdfs'][0], 'https://www.nber.org/system/files/working_papers/w36010/w36010.pdf')
+
+    def test_collect_adds_new_papers_and_gives_stored_ones_author_ids(self):
+        stored = {'10.3386/w36001': {'id': 'nber-w36001', 'doi': '10.3386/w36001', 'authors': [{'n': 'Ada Lovelace'}]}}
+        pages = {'w36010': cl.parse_nber_page(NBER_PAGE), 'w35900': {'date': '2026-08-31'}}
+        later = work(id='https://openalex.org/W5', doi='https://doi.org/10.3386/w36001', type='report')
+        with mock.patch.object(cl, 'nber_listing', return_value=[listed(), listed('w36001'), listed('w35900', '2026-09')]), \
+                mock.patch.object(cl, 'nber_page', side_effect=lambda n: pages.get(n, {})), \
+                mock.patch.object(cl, 'openalex_by_doi', return_value={'10.3386/w36001': later}) as lookup:
+            cands, touched = cl.collect_nber(self.journal, '2026-09-13', set(), stored)
+        self.assertEqual([c['id'] for c in cands], ['nber-w36010'], 'known papers skipped; papers released before `since` left out')
+        self.assertEqual(sorted(lookup.call_args[0][0]), ['10.3386/w35900', '10.3386/w36001', '10.3386/w36010'])
+        self.assertEqual(touched, [stored['10.3386/w36001']])
+        self.assertEqual(stored['10.3386/w36001']['authors'][0]['id'], 'A1')
+
+    def test_listing_failure_does_not_stop_the_run(self):
+        with mock.patch.object(cl, 'nber_listing', side_effect=OSError('down')), self.assertLogs('radar', 'WARNING'):
+            self.assertEqual(cl.collect_nber(self.journal, '2026-09-13', set(), {}), ([], []))
+
+    def test_redate_sets_release_days_and_completes_short_abstracts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            store.add({'id': 'W1', 'doi': '10.3386/w36010', 'journal': 'nber', 'published': '2026-11-01', 'added': '2026-11-12', 'abstract': 'We'})
+            store.add({'id': 'W2', 'doi': '10.1257/aer.1', 'journal': 'aer', 'published': '2026-11-01', 'added': '2026-11-12', 'abstract': 'We'})
+            with mock.patch.object(cl, 'nber_page', return_value=cl.parse_nber_page(NBER_PAGE)) as page:
+                self.assertEqual(cl.redate_nber(store), (1, 1))
+            page.assert_called_once_with('w36010')
+            rows = {p['id']: p for _, p in store.papers()}
+            self.assertEqual(rows['W1']['published'], '2026-11-09')
+            self.assertEqual(rows['W1']['abstract'], 'We study wages and prices in 40 countries.')
+            self.assertEqual(rows['W2']['published'], '2026-11-01')
 
 
 class Enrichment(unittest.TestCase):

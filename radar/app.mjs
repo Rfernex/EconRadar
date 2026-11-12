@@ -208,7 +208,7 @@ function render(keepNetwork = false) {
   else if (S.view === 'trends') main.innerHTML = trendsHtml();
   else if (S.view === 'sources') main.innerHTML = sourcesHtml();
 }
-const emptyRadar = () => `<div class="empty"><h2>The radar is empty</h2><p>No papers have been collected yet. The collector runs every Monday and Thursday; you can also start it by hand (see Sources).</p><a class="btn" href="#sources">Sources & setup</a></div>`;
+const emptyRadar = () => `<div class="empty"><h2>The radar is empty</h2><p>No papers have been collected yet. The collector runs every Tuesday and Friday; you can also start it by hand (see Sources).</p><a class="btn" href="#sources">Sources & setup</a></div>`;
 
 // ---- paper cards --------------------------------------------------------------------
 const journalShort = k => S.ctx.journals.get(k)?.short || k;
@@ -705,7 +705,7 @@ function nextRun() {
   const now = new Date();
   for (let i = 0; i < 8; i++) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + i, 5, 23));
-    if ([1, 4].includes(d.getUTCDay()) && d > now) return d;
+    if ([2, 5].includes(d.getUTCDay()) && d > now) return d;
   }
   return null;
 }
@@ -718,10 +718,10 @@ function sourcesHtml() {
   const journals = S.config.journalGroups.map(g => `<tr><th colspan="4" style="padding-top:16px">${esc(g.label)}</th></tr>${S.config.journals.filter(j => j.group === g.key).map(j => `<tr><td>${esc(j.name)} <span class="muted small">${esc(j.short)}</span></td><td class="num">${per[j.key] || 0}</td><td class="small">${lastAdded[j.key] ? dayLabel(lastAdded[j.key]) : '—'}</td><td class="small">${j.enabled === false ? 'Paused' : 'Collecting'}</td></tr>`).join('')}`).join('');
   return `<div class="heading"><div><h1>Sources & settings</h1><p>Where the papers come from, how they are summarised, and what stays on this device.</p></div></div>
     <div class="stats"><div class="stat"><strong>${fmt(S.papers.length)}</strong><span>papers kept in the radar</span></div><div class="stat"><strong>${last ? dayLabel(last.at.slice(0, 10), { day: 'numeric', month: 'short' }) : '—'}</strong><span>last update${last ? ` · ${last.added} added` : ''}</span></div>
-      <div class="stat"><strong>${nr ? nr.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</strong><span>next scheduled update (Mon & Thu, ~06:30 Paris)</span></div><div class="stat"><strong>${pct(S.papers.length ? model / S.papers.length : 0)}</strong><span>summarised by a model · ${pct(S.papers.length ? withConc / S.papers.length : 0)} also read the conclusion</span></div></div>
+      <div class="stat"><strong>${nr ? nr.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</strong><span>next scheduled update (Tue & Fri, ~06:30 Paris)</span></div><div class="stat"><strong>${pct(S.papers.length ? model / S.papers.length : 0)}</strong><span>summarised by a model · ${pct(S.papers.length ? withConc / S.papers.length : 0)} also read the conclusion</span></div></div>
     ${model < S.papers.length ? `<div class="notice warn" style="margin-bottom:16px"><b>${fmt(S.papers.length - model)} papers have automatic summaries only.</b> They were tagged with keyword rules because the collector had no model key. Add one (below) and each update upgrades the most recent ${'60'} of them, or start a larger catch-up by hand.</div>` : ''}
     <div class="grid-2"><div class="panel setup"><span class="eyebrow">How it works</span>
-        <ol><li>Every Monday and Thursday a GitHub Action (<code>.github/workflows/literature-radar.yml</code>) asks <b>OpenAlex</b> for new articles in the journals below and new NBER working papers, published in the last ${S.config.lookbackDays} days and not yet in the radar.</li>
+        <ol><li>Every Tuesday and Friday a GitHub Action (<code>.github/workflows/literature-radar.yml</code>) asks <b>OpenAlex</b> for new articles in the journals below, and reads <b>NBER</b>'s own list of working papers (released each Monday, so they arrive the next morning, dated to their release day). It keeps those published in the last ${S.config.lookbackDays} days and not yet in the radar.</li>
         <li>Missing abstracts are filled from <b>Crossref</b> and <b>Semantic Scholar</b>. When a legal open-access copy exists (arXiv, repositories, open publisher PDFs), its <b>conclusion section</b> is read. Publishers that block scripts are skipped.</li>
         <li>A model writes the research question, summary and conclusion, and tags fields, methods, identification, data, topics, setting and JEL codes against the fixed lists in <code>radar/config.json</code>. Without a key, keyword rules tag the paper and it is upgraded later.</li>
         <li>Papers are only ever added, never dropped, so the network and trends build up over time.</li></ol></div>
