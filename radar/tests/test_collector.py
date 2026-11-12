@@ -308,6 +308,16 @@ class OpenRouter(unittest.TestCase):
         with self.assertRaises(enrich.QuotaReached):
             call()
 
+    def test_placeholder_text_is_never_kept(self):
+        junk = dict(self.GOOD, contribution='placeholder', conclusion='N/A', data_detail='...')
+        provider, sent, call = self.run_with([self.reply('m', json.dumps(junk))])
+        out = call()
+        self.assertEqual((out['contribution'], out['conclusion'], out['dataDetail']), ('', '', ''))
+        self.assertEqual(out['summary'], 'S.')
+        self.assertIn('nemotron-3.5-super-vl:free 1 ok/0 rejected', provider.report())
+        with self.assertRaises(enrich.EnrichError):
+            enrich.validate(dict(self.GOOD, summary='placeholder'), TAX)
+
     def test_daily_limit_stops_the_provider(self):
         per_day = {'error': {'code': 429, 'message': 'Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day'}}
         for answer in [(429, per_day), per_day]:  # as an HTTP error, and inside a 200

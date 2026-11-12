@@ -262,10 +262,19 @@ class EnrichError(Exception):
     pass
 
 
+# Weak models sometimes fill a field with a stand-in instead of an answer.
+JUNK = re.compile(r'^(?:placeholder|n/?a|none|null|nil|tbd|todo|unknown|string|text|not (?:available|applicable|stated|provided|reported)|\.{2,}|-+|…|lorem ipsum.*)\.?$', re.I)
+
+
+def answer(value, limit):
+    text = clean(value, limit)
+    return '' if JUNK.match(text) else text
+
+
 def _strings(value, limit, size):
     out = []
     for item in value if isinstance(value, list) else []:
-        item = clean(item, size)
+        item = answer(item, size)
         if item and item.lower() not in {x.lower() for x in out}:
             out.append(item)
     return out[:limit]
@@ -283,7 +292,7 @@ def validate(raw, tax):
     """Model output -> record fields. Raises EnrichError when the answer is unusable."""
     if not isinstance(raw, dict):
         raise EnrichError('answer is not a JSON object')
-    summary = clean(raw.get('summary'), 900)
+    summary = answer(raw.get('summary'), 900)
     fields = _keys(raw.get('fields'), set(tax.field_keys), 3)
     if not summary or not fields:
         raise EnrichError('answer lacks a summary or a field')
@@ -293,20 +302,20 @@ def validate(raw, tax):
         methods = methods[:4]
     topics = [t.lower() for t in _strings(raw.get('topics'), 5, 48) if len(t) >= 3]
     jel = [j.upper() for j in _strings(raw.get('jel'), 4, 4) if re.fullmatch(r'[A-Za-z]\d{0,2}', j)]
-    question = clean(raw.get('question'), 320)
+    question = answer(raw.get('question'), 320)
     return {
         'q': question,
-        'contribution': clean(raw.get('contribution'), 400),
+        'contribution': answer(raw.get('contribution'), 400),
         'summary': summary,
-        'conclusion': clean(raw.get('conclusion'), 600),
+        'conclusion': answer(raw.get('conclusion'), 600),
         'fields': fields,
         'methods': methods,
-        'ident': clean(raw.get('identification'), 260),
+        'ident': answer(raw.get('identification'), 260),
         'data': _keys(raw.get('data_types'), set(tax.data_keys), 4),
-        'dataDetail': clean(raw.get('data_detail'), 220),
+        'dataDetail': answer(raw.get('data_detail'), 220),
         'topics': topics,
         'geo': _strings(raw.get('geography'), 4, 40),
-        'period': clean(raw.get('period'), 30).replace('-', '–'),
+        'period': answer(raw.get('period'), 30).replace('-', '–'),
         'jel': jel,
     }
 
@@ -439,6 +448,7 @@ class OpenRouterEnricher:
         self.failures = {}       # model id -> consecutive failed answers
         self.dropped = set()     # models failing repeatedly, not tried again this run
         self.papers_failed = 0   # consecutive papers no model could summarise
+        self.tally = {}          # model id -> [answers used, answers rejected]
 
     def _live_models(self):
         try:
@@ -485,7 +495,12 @@ class OpenRouterEnricher:
             body['provider'] = {'require_parameters': True}  # only providers that honour the JSON format
         return json.dumps(body).encode()
 
+    def report(self):
+        rows = [f"{mid.split('/')[-1]} {ok} ok/{bad} rejected" for mid, (ok, bad) in self.tally.items()]
+        return 'OpenRouter models: ' + ('; '.join(rows) or 'none called') + (f" (dropped: {', '.join(sorted(self.dropped))})" if self.dropped else '')
+
     def _fail(self, model, error):
+        self.tally.setdefault(model['id'], [0, 0])[1] += 1
         n = self.failures.get(model['id'], 0) + 1
         self.failures[model['id']] = n
         if n >= 2 and model['id'] != 'openrouter/free':
@@ -514,6 +529,7 @@ class OpenRouterEnricher:
                 out['by'] = f"openrouter:{data.get('model') or model['id']}"
                 self.failures[model['id']] = 0
                 self.papers_failed = 0
+                self.tally.setdefault(model['id'], [0, 0])[0] += 1
                 return out
             except urllib.error.HTTPError as e:
                 problem = self._problem(e.code, e.read()[:300].decode('utf-8', 'replace'))

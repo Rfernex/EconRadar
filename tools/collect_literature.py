@@ -627,6 +627,8 @@ def main(argv=None):
         for p, *_ in redo:
             store.touch(p)
 
+    if provider and hasattr(provider, 'report'):
+        log.info('%s', provider.report())
     per_journal = {}
     for r in records:
         per_journal[r['journal']] = per_journal.get(r['journal'], 0) + 1
