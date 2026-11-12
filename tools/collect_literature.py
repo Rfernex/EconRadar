@@ -1,0 +1,608 @@
+"""Literature Radar collector: new articles from the journals in radar/config.json.
+
+Runs twice a week from .github/workflows/literature-radar.yml (Monday and Thursday)
+and by hand from the repository root:
+
+    python3 tools/collect_literature.py                    # new papers in the lookback window
+    python3 tools/collect_literature.py --since 2026-05-01 # backfill from a date
+    python3 tools/collect_literature.py --reenrich 200     # upgrade rule-tagged papers
+    python3 tools/collect_literature.py --dry-run --limit 5
+
+Sources: OpenAlex finds the papers (authors with stable ids, institutions,
+abstracts); Crossref and Semantic Scholar fill missing abstracts and open-access
+links; legal open-access PDFs (arXiv, repositories, open publisher copies) supply
+the conclusion section. Hosts that refuse automated downloads are skipped, never
+worked around. Summaries and tags come from tools/radar_enrich.py.
+
+History is kept: papers are only ever added or upgraded. They are stored by the
+month they were added, in radar/data/papers-YYYY-MM.json, and radar/data/index.json
+lists the files and the run log. Abstracts are kept as excerpts of at most 180 words
+with a link to the article; PDF text is never stored, only what the summary says.
+"""
+import argparse
+import concurrent.futures as futures
+import html
+import io
+import json
+import logging
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import quote, urlencode, urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import radar_enrich as enrich  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+APP = ROOT / 'radar'
+DATA = APP / 'data'
+CONFIG = APP / 'config.json'
+UA = 'LiteratureRadar/1.0 (scholarly digest; python-urllib)'
+OPENALEX = 'https://api.openalex.org/works'
+SELECT = ('id,doi,title,publication_date,type,primary_location,locations,best_oa_location,'
+          'authorships,abstract_inverted_index,biblio,keywords,primary_topic')
+# Publisher hosts that answer scripts with a bot-protection page (checked Nov 2026).
+REFUSING_HOSTS = {'onlinelibrary.wiley.com', 'academic.oup.com', 'www.sciencedirect.com', 'papers.ssrn.com',
+                  'www.tandfonline.com', 'journals.sagepub.com', 'www.jstor.org', 'doi.org', 'dx.doi.org',
+                  'www.journals.uchicago.edu', 'www.aeaweb.org', 'pubs.aeaweb.org'}
+NOT_RESEARCH = re.compile(
+    r'^\s*(front matter|back matter|issue information|editorial board|editorial\b|editors?\W? (introduction|note)|'
+    r'erratum|errata|corrigendum|correction|retraction|expression of concern|announcement|report of the|'
+    r'minutes of|index to|masthead|acknowledg|(list of )?referees|reviewers|(table of )?contents|forthcoming|'
+    r'books? received|book reviews?|notes on contributors|in memoriam|obituary|call for papers|preface|foreword|'
+    r'introduction to the (special|symposium)|review of periodical literature|list of publications)', re.I)
+BOOK_REVIEW = re.compile(r'\.\s+(?:By|Edited by)\s+[A-Z]|\bPp\.\s*[xivlXIVL\d]|Press,\s*(?:1[89]|20)\d\d')
+CONCLUSION_HEAD = re.compile(
+    r'(?im)^[ \t]*(?:\d{1,2}\.?|[IVX]{1,5}\.?|[A-H]\.)?[ \t]*'
+    r'(conclusions?|concluding (?:remarks|comments|discussion|thoughts)|discussion and conclusions?|'
+    r'summary and conclusions?|conclusions? and (?:discussion|implications|policy implications)|final (?:remarks|thoughts)|discussion)'
+    r'[ \t]*\.?[ \t]*$')
+SECTION_END = re.compile(
+    r'(?im)^[ \t]*(?:[A-Z]\.?[ \t]+)?(references|bibliography|works cited|appendix|appendices|acknowledg(?:e)?ments?|'
+    r'data availability|online appendix|supplementary (?:material|information)|methods|notes|funding)\b')
+PDF_ABSTRACT = re.compile(
+    r'(?is)\babstract\b[\s.:—-]*(.{200,3000}?)(?=\n\s*(?:jel\b|keywords?|key words|\d?\.?\s*introduction|i\.?\s+introduction)\b)')
+
+log = logging.getLogger('radar')
+
+
+def now_utc():
+    return datetime.now(timezone.utc)
+
+
+def clean(value):
+    return re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', ' ', str(value or '')))).strip()
+
+
+LEADING_LABEL = re.compile(r'^\s*(?:abstract|summary)\b[\s.:\u2014-]*', re.I)
+
+
+def strip_label(text):
+    return LEADING_LABEL.sub('', clean(text))
+
+
+def excerpt(text, words=180):
+    parts = clean(text).split()
+    return ' '.join(parts[:words]) + (' …' if len(parts) > words else '')
+
+
+def fetch(url, *, data=None, headers=None, timeout=40, retries=3, max_bytes=40_000_000):
+    head = {'User-Agent': UA, 'Accept': 'application/json'}
+    head.update(headers or {})
+    for attempt in range(retries):
+        req = urllib.request.Request(url, data=data, headers=head)
+        try:
+            # `timeout` bounds each socket read; the deadline bounds the whole download,
+            # so a server trickling bytes cannot stall the run.
+            deadline = time.monotonic() + timeout * 2
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                chunks, size = [], 0
+                while True:
+                    chunk = r.read1(256 * 1024)  # returns what has arrived, so the deadline is checked often
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ValueError('response too large')
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f'download exceeded {timeout * 2}s')
+                return b''.join(chunks)
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
+                wait = e.headers.get('Retry-After', '')
+                time.sleep(min(float(wait) if wait.isdigit() else 3 * 2 ** attempt, 30))
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt < retries - 1:
+                time.sleep(2 * 2 ** attempt)
+                continue
+            raise
+
+
+def get_json(url, **kw):
+    return json.loads(fetch(url, **kw))
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+def openalex_works(source_ids, since, key=''):
+    """All articles from these sources published on or after `since`.
+
+    With a key, cursor paging; without one OpenAlex only allows numbered pages
+    (up to 10,000 results), so the order is pinned to keep pages stable."""
+    works = []
+    for i in range(0, len(source_ids), 40):
+        chunk = source_ids[i:i + 40]
+        cursor, page_no = '*', 1
+        while cursor:
+            params = {'filter': f'primary_location.source.id:{"|".join(chunk)},from_publication_date:{since},type:article|review',
+                      'per_page': '200', 'select': SELECT, 'sort': 'publication_date:desc'}
+            if key:
+                params['api_key'] = key
+                params['cursor'] = cursor
+            else:
+                params['page'] = str(page_no)
+            try:
+                page = get_json(f'{OPENALEX}?{urlencode(params)}', retries=4)
+            except urllib.error.HTTPError as e:
+                detail = e.read()[:400].decode('utf-8', 'replace')
+                raise SystemExit(f'OpenAlex refused the request ({e.code}): {detail}\n'
+                                 'Without OPENALEX_API_KEY the free budget is shared per IP address; '
+                                 'a free key from https://openalex.org/settings/api gives this collector its own.') from e
+            results = page.get('results') or []
+            works += results
+            if key:
+                cursor = (page.get('meta') or {}).get('next_cursor') if results else None
+            else:
+                page_no += 1
+                cursor = '*' if len(results) == 200 and page_no <= 50 else None
+    return works
+
+
+def restore_abstract(index):
+    if not isinstance(index, dict):
+        return ''
+    words = {}
+    for word, places in index.items():
+        for p in places or []:
+            if isinstance(p, int) and 0 <= p < 5000:
+                words[p] = word
+    return clean(' '.join(words[i] for i in sorted(words)))
+
+
+def candidate(work, journals):
+    source = (((work.get('primary_location') or {}).get('source') or {}).get('id') or '').split('/')[-1]
+    journal = journals.get(source)
+    if not journal:
+        return None
+    doi = (work.get('doi') or '').replace('https://doi.org/', '').lower()
+    authors = []
+    for a in work.get('authorships') or []:
+        person = a.get('author') or {}
+        name = clean(person.get('display_name'))
+        if not name:
+            continue
+        inst = next((clean(i.get('display_name')) for i in a.get('institutions') or [] if i.get('display_name')), '')
+        row = {'n': name, 'id': (person.get('id') or '').split('/')[-1], 'orcid': (person.get('orcid') or '').split('/')[-1],
+               'inst': inst, 'cc': (a.get('countries') or [''])[0]}
+        authors.append({k: v for k, v in row.items() if v})
+    pdfs = []
+    for loc in [work.get('best_oa_location')] + list(work.get('locations') or []):
+        url = (loc or {}).get('pdf_url')
+        if url and url not in pdfs:
+            pdfs.append(url)
+    keywords = [clean(k.get('display_name')) for k in sorted(work.get('keywords') or [], key=lambda k: -(k.get('score') or 0))]
+    biblio = work.get('biblio') or {}
+    return {
+        'id': work['id'].split('/')[-1],
+        'doi': doi,
+        'title': clean(work.get('title')),
+        'journal': journal['key'],
+        'published': work.get('publication_date') or '',
+        'authors': authors[:30],
+        'abstract': strip_label(restore_abstract(work.get('abstract_inverted_index'))),
+        'url': f'https://doi.org/{doi}' if doi else work['id'],
+        'kind': 'review' if work.get('type') == 'review' else 'article',
+        '_pdfs': pdfs,
+        '_keywords': keywords[:5],
+        '_pages': (biblio.get('first_page'), biblio.get('last_page')),
+        '_group': journal.get('group'),
+    }
+
+
+def is_research(c):
+    title = c['title']
+    if len(title) < 4 or not c['authors']:
+        return False
+    if NOT_RESEARCH.search(title) or BOOK_REVIEW.search(title):
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Missing abstracts and open-access copies
+# ---------------------------------------------------------------------------
+def crossref_abstract(doi):
+    try:
+        message = get_json(f'https://api.crossref.org/works/{quote(doi)}', retries=2, timeout=25)['message']
+        return strip_label(message.get('abstract') or '')
+    except Exception:
+        return ''
+
+
+def fill_from_crossref(cands):
+    # Elsevier (10.1016) does not deposit abstracts with Crossref; skip those lookups.
+    todo = [c for c in cands if not c['abstract'] and c['doi'] and not c['doi'].startswith('10.1016/')]
+    with futures.ThreadPoolExecutor(max_workers=4) as pool:
+        for c, text in zip(todo, pool.map(lambda c: crossref_abstract(c['doi']), todo)):
+            if len(text) > 120:
+                c['abstract'] = text
+    return len(todo)
+
+
+def fill_from_semantic_scholar(cands):
+    # Without a key Semantic Scholar shares a small pool across all callers: small batches, paced,
+    # and a refused batch is skipped rather than ending the step.
+    todo = [c for c in cands if c['doi']]
+    found = failed = 0
+    for i in range(0, len(todo), 100):
+        chunk = todo[i:i + 100]
+        body = json.dumps({'ids': [f"DOI:{c['doi']}" for c in chunk]}).encode()
+        if i:
+            time.sleep(3)
+        try:
+            rows = get_json('https://api.semanticscholar.org/graph/v1/paper/batch?fields=abstract,openAccessPdf,tldr',
+                            data=body, headers={'Content-Type': 'application/json'}, retries=4, timeout=60)
+        except Exception as e:
+            failed += 1
+            if failed >= 3:
+                log.warning('Semantic Scholar keeps refusing (%s); continuing without it', e)
+                return found
+            continue
+        for c, row in zip(chunk, rows):
+            if not row:
+                continue
+            if not c['abstract'] and len(clean(row.get('abstract'))) > 120:
+                c['abstract'] = strip_label(row['abstract'])
+                found += 1
+            pdf = (row.get('openAccessPdf') or {}).get('url')
+            if pdf and pdf not in c['_pdfs']:
+                c['_pdfs'].append(pdf)
+            c['_tldr'] = clean((row.get('tldr') or {}).get('text'))
+    return found
+
+
+def pdf_text(body):
+    try:
+        import pypdf
+    except ImportError:
+        return ''
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(body))
+        pages = reader.pages
+        total = min(len(pages), 90)
+        parts = []
+        # Text extraction is the slow step. Stop once past the conclusion and into the
+        # references: appendices, often half the file, are never needed.
+        for i in range(total):
+            parts.append(pages[i].extract_text() or '')
+            if i >= 3 and i >= total * 0.3 and i % 2:
+                text = '\n'.join(parts)
+                heads = [m for m in CONCLUSION_HEAD.finditer(text) if m.start() > len(text) * 0.3]
+                if heads and SECTION_END.search(text, heads[-1].end()):
+                    return text
+        return '\n'.join(parts)
+    except Exception:
+        return ''
+
+
+def conclusion_section(text):
+    """The paper's own conclusion section, if its heading can be found."""
+    n = len(text)
+    conclusions, discussions = [], []
+    for m in CONCLUSION_HEAD.finditer(text):
+        if m.start() < n * 0.3:  # headings this early are a table of contents or a roadmap
+            continue
+        (discussions if m.group(1).lower() == 'discussion' else conclusions).append(m)
+    head = (conclusions or discussions or [None])[-1]
+    if not head:
+        return ''
+    rest = text[head.end():]
+    end = SECTION_END.search(rest)
+    body = rest[:end.start() if end else 9000][:9000]
+    body = re.sub(r'-\n(?=[a-z])', '', body)  # re-join hyphenated line breaks
+    body = re.sub(r'\s+', ' ', body).strip()
+    return body if len(body) >= 300 else ''
+
+
+def abstract_from_pdf(text):
+    m = PDF_ABSTRACT.search(text[:15000])
+    return clean(re.sub(r'-\n(?=[a-z])', '', m.group(1))) if m else ''
+
+
+def read_open_copy(urls, parser=None):
+    """(url, conclusion, abstract) from the first open-access PDF that can be read.
+
+    `parser` is an optional process pool: text extraction is CPU-bound, so parsing in
+    separate processes lets several PDFs be read at once, and a malformed file that
+    makes pypdf spin is abandoned after two minutes."""
+    tried = 0
+    for url in urls:
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https') or (parsed.hostname or '') in REFUSING_HOSTS:
+            continue
+        tried += 1
+        if tried > 3:
+            break
+        try:
+            body = fetch(url, headers={'Accept': 'application/pdf'}, timeout=45, retries=1, max_bytes=30_000_000)
+        except Exception:
+            continue
+        if not body.startswith(b'%PDF'):
+            continue
+        try:
+            text = parser.submit(pdf_text, body).result(timeout=120) if parser else pdf_text(body)
+        except Exception:
+            continue
+        if len(text) < 2000:
+            continue
+        return url, conclusion_section(text), abstract_from_pdf(text)
+    return '', '', ''
+
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+class Store:
+    def __init__(self, root):
+        self.root = root
+        self.index_path = root / 'index.json'
+        self.index = json.loads(self.index_path.read_text()) if self.index_path.exists() else {
+            'version': 1, 'shards': [], 'runs': []}
+        self.shards = {}
+        for shard in self.index.get('shards', []):
+            path = root / shard['file']
+            if path.exists():
+                self.shards[shard['month']] = json.loads(path.read_text()).get('papers', [])
+        self.dirty = set()
+
+    def papers(self):
+        for month, rows in self.shards.items():
+            for row in rows:
+                yield month, row
+
+    def known(self):
+        ids, dois = set(), set()
+        for _, p in self.papers():
+            ids.add(p['id'])
+            if p.get('doi'):
+                dois.add(p['doi'])
+        return ids, dois
+
+    def top_topics(self, n=150):
+        counts = {}
+        for _, p in self.papers():
+            for t in p.get('topics', []):
+                counts[t] = counts.get(t, 0) + 1
+        return [t for t, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
+
+    def add(self, record):
+        month = record['added'][:7]
+        self.shards.setdefault(month, []).append(record)
+        self.dirty.add(month)
+
+    def touch(self, record):
+        month = record['added'][:7]
+        self.dirty.add(month)
+
+    def save(self, run):
+        self.root.mkdir(parents=True, exist_ok=True)
+        for month in sorted(self.dirty):
+            rows = sorted(self.shards[month], key=lambda p: (p['added'], p.get('published', ''), p['id']), reverse=True)
+            write_json(self.root / f'papers-{month}.json', {'version': 1, 'month': month, 'papers': rows})
+        shards = [{'month': m, 'file': f'papers-{m}.json', 'count': len(rows)}
+                  for m, rows in sorted(self.shards.items(), reverse=True)]
+        runs = ([run] + self.index.get('runs', []))[:300]
+        self.index = {'version': 1, 'generatedAt': run['at'], 'total': sum(s['count'] for s in shards),
+                      'shards': shards, 'runs': runs}
+        write_json(self.index_path, self.index)
+
+
+def write_json(path, payload):
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + '\n')
+    tmp.replace(path)
+
+
+# ---------------------------------------------------------------------------
+# Enrichment
+# ---------------------------------------------------------------------------
+def stored(c):
+    record = {k: v for k, v in c.items() if not k.startswith('_')}
+    record['abstract'] = excerpt(record.get('abstract', ''))
+    if not record.get('pdf'):
+        record.pop('pdf', None)
+    return record
+
+
+def enrich_all(items, provider, tax, stats):
+    """items: list of (record, abstract, conclusion, keywords, tldr). Fills record in place."""
+    def rule_fill(record, abstract, conclusion, keywords, tldr):
+        record.update(enrich.rules(record, abstract, conclusion, tax, keywords, tldr))
+        if not record['fields']:
+            record['fields'] = list(tax.journals.get(record['journal'], {}).get('fields', []))[:1]
+        record['by'] = 'rules'
+
+    stop = False
+
+    def one(item):
+        nonlocal stop
+        record, abstract, conclusion, keywords, tldr = item
+        record['at'] = now_utc().date().isoformat()
+        record['text'] = [k for k, v in (('abstract', abstract), ('conclusion', conclusion)) if v]
+        if provider and not stop:
+            journal = tax.journals.get(record['journal'], {})
+            try:
+                record.update(provider.enrich(enrich.user_message(record, journal, abstract, conclusion)))
+                if not record['topics'] and keywords:
+                    record['topics'] = [k.lower() for k in keywords[:3]]
+                record['by'] = provider.name
+                stats['llm'] += 1
+                return
+            except enrich.QuotaReached as e:
+                log.warning('%s', e)
+                stop = True
+            except enrich.EnrichError as e:
+                log.warning('Enrichment failed for %s (%s); using rules', record['id'], e)
+                stats['llm_failed'] += 1
+        rule_fill(record, abstract, conclusion, keywords, tldr)
+        stats['rules'] += 1
+
+    workers = getattr(provider, 'workers', 1) if provider else 1
+    with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(one, items))
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def parse_args(argv):
+    p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    p.add_argument('--since', help='collect papers published on or after this date (YYYY-MM-DD)')
+    p.add_argument('--limit', type=int, default=0, help='process at most this many new papers')
+    p.add_argument('--max-pdfs', type=int, default=250, help='open-access PDFs to read this run')
+    p.add_argument('--reenrich', type=int, default=None,
+                   help='rule-tagged papers to redo with the model (default 60 with a key, 0 without)')
+    p.add_argument('--no-model', action='store_true', help='tag with rules only, even if a key is set')
+    p.add_argument('--dry-run', action='store_true', help='print what would be added; write nothing')
+    p.add_argument('--data-dir', default=str(DATA), help=argparse.SUPPRESS)
+    return p.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    logging.getLogger('pypdf').setLevel(logging.ERROR)
+    started = now_utc()
+    config = json.loads(CONFIG.read_text())
+    tax = enrich.Taxonomy(config)
+    store = Store(Path(args.data_dir))
+    journals = {j['openalex']: j for j in config['journals'] if j.get('enabled', True)}
+    since = args.since or (started.date() - timedelta(days=config.get('lookbackDays', 60))).isoformat()
+
+    works = openalex_works(list(journals), since, os.environ.get('OPENALEX_API_KEY', ''))
+    known_ids, known_dois = store.known()
+    cands, skipped = [], 0
+    for w in works:
+        c = candidate(w, journals)
+        if not c or c['id'] in known_ids or (c['doi'] and c['doi'] in known_dois):
+            continue
+        if not is_research(c):
+            skipped += 1
+            continue
+        known_ids.add(c['id'])
+        if c['doi']:
+            known_dois.add(c['doi'])
+        cands.append(c)
+    cands.sort(key=lambda c: c['published'], reverse=True)
+    if args.limit:
+        cands = cands[:args.limit]
+    log.info('OpenAlex: %d works since %s; %d new research papers (%d non-research items skipped)',
+             len(works), since, len(cands), skipped)
+
+    if cands:
+        fill_from_crossref(cands)
+        s2 = fill_from_semantic_scholar(cands)
+        log.info('Abstracts: %d/%d after Crossref and Semantic Scholar (+%d from S2)',
+                 sum(bool(c['abstract']) for c in cands), len(cands), s2)
+
+    # Open-access copies: conclusions, and abstracts the indexes lack.
+    texts = {}
+    with_pdf = [c for c in cands if c['_pdfs']][:args.max_pdfs]
+    done = [0]
+
+    def read(c):
+        result = read_open_copy(c['_pdfs'], parser)
+        done[0] += 1
+        if done[0] % 100 == 0:
+            log.info('  … %d/%d open-access copies tried', done[0], len(with_pdf))
+        return result
+
+    with futures.ProcessPoolExecutor(max_workers=max(1, min(4, (os.cpu_count() or 2) - 1))) as parser, \
+            futures.ThreadPoolExecutor(max_workers=6) as pool:
+        for c, (url, conclusion, pdf_abstract) in zip(with_pdf, pool.map(read, with_pdf)):
+            if url:
+                c['pdf'] = url
+                texts[c['id']] = conclusion
+                if not c['abstract'] and pdf_abstract:
+                    c['abstract'] = pdf_abstract
+    log.info('Open-access PDFs read: %d of %d tried; conclusions found: %d',
+             len(texts), len(with_pdf), sum(bool(t) for t in texts.values()))
+
+    # Outside economics, an item with no abstract and no text is usually a comment or news piece.
+    before = len(cands)
+    cands = [c for c in cands if c['_group'] != 'beyond' or c['abstract'] or texts.get(c['id'])]
+    if before != len(cands):
+        log.info('Dropped %d abstract-less items from non-economics journals', before - len(cands))
+
+    provider = None if args.no_model else enrich.choose_provider(tax, store.top_topics())
+    log.info('Enrichment: %s', provider.name if provider else 'rules only (no ANTHROPIC_API_KEY or OPENROUTER_API_KEY)')
+    stats = {'llm': 0, 'llm_failed': 0, 'rules': 0}
+    added = started.date().isoformat()
+    records = []
+    items = []
+    for c in cands:
+        record = stored(c)
+        record['added'] = added
+        records.append(record)
+        items.append((record, c['abstract'], texts.get(c['id'], ''), c['_keywords'], c.get('_tldr', '')))
+    enrich_all(items, provider, tax, stats)
+
+    # Upgrade earlier rule-tagged papers once a model is available.
+    upgraded = 0
+    budget = args.reenrich if args.reenrich is not None else (60 if provider else 0)
+    if provider and budget > 0:
+        old = sorted((p for _, p in store.papers() if p.get('by') == 'rules'),
+                     key=lambda p: (p['added'], p.get('published', '')), reverse=True)[:budget]
+        redo = []
+        for p in old:
+            conclusion = ''
+            if p.get('pdf'):
+                _, conclusion, _ = read_open_copy([p['pdf']])
+            redo.append((p, p.get('abstract', ''), conclusion, p.get('topics', []), ''))
+        before_llm = stats['llm']
+        enrich_all(redo, provider, tax, stats)
+        upgraded = stats['llm'] - before_llm
+        for p, *_ in redo:
+            store.touch(p)
+
+    per_journal = {}
+    for r in records:
+        per_journal[r['journal']] = per_journal.get(r['journal'], 0) + 1
+    run = {'at': now_utc().isoformat(timespec='seconds'), 'since': since, 'added': len(records), 'upgraded': upgraded,
+           'byModel': stats['llm'], 'byRules': stats['rules'], 'failed': stats['llm_failed'],
+           'provider': provider.name if provider else 'rules', 'pdfs': len(texts), 'journals': per_journal,
+           'seconds': round((now_utc() - started).total_seconds())}
+    if args.dry_run:
+        for r in records[:20]:
+            print(json.dumps({k: r.get(k) for k in ('journal', 'published', 'title', 'q', 'fields', 'methods', 'data', 'topics', 'by')}, ensure_ascii=False))
+        print(json.dumps(run, indent=1))
+        return run
+    for r in records:
+        store.add(r)
+    store.save(run)
+    log.info('Added %d papers (%d by model, %d by rules), upgraded %d; %d papers in the radar',
+             len(records), stats['llm'] - upgraded, stats['rules'], upgraded, store.index['total'])
+    return run
+
+
+if __name__ == '__main__':
+    main()

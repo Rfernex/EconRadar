@@ -1,0 +1,15 @@
+{
+  "id": "./",
+  "name": "Literature Radar",
+  "short_name": "Lit Radar",
+  "description": "New papers from the top economics journals, summarised, tagged and mapped.",
+  "start_url": "./#latest",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f2ec",
+  "theme_color": "#1f4f57",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

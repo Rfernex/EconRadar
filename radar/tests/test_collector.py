@@ -1,0 +1,191 @@
+"""Collector checks that need no network. Run: python3 -m unittest discover -s radar/tests"""
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools'))
+import collect_literature as cl  # noqa: E402
+import radar_enrich as enrich  # noqa: E402
+
+CONFIG = json.loads((ROOT / 'radar/config.json').read_text())
+TAX = enrich.Taxonomy(CONFIG)
+
+
+def work(**over):
+    w = {'id': 'https://openalex.org/W1', 'doi': 'https://doi.org/10.1257/aer.1', 'title': 'Minimum Wages and Monopsony',
+         'publication_date': '2026-10-01', 'type': 'article',
+         'primary_location': {'source': {'id': 'https://openalex.org/S23254222'}},
+         'authorships': [{'author': {'id': 'https://openalex.org/A1', 'display_name': 'Ada Lovelace', 'orcid': 'https://orcid.org/0000-1'},
+                          'institutions': [{'display_name': 'MIT'}], 'countries': ['US']}],
+         'abstract_inverted_index': {'We': [0], 'study': [1], 'wages.': [2]},
+         'best_oa_location': {'pdf_url': 'https://arxiv.org/pdf/1'}, 'locations': [{'pdf_url': 'https://arxiv.org/pdf/1'}],
+         'keywords': [{'display_name': 'Minimum wage', 'score': 0.9}], 'biblio': {}}
+    w.update(over)
+    return w
+
+
+class Collector(unittest.TestCase):
+    journals = {j['openalex']: j for j in CONFIG['journals']}
+
+    def test_config_keys_are_unique_and_families_known(self):
+        for section in ('fields', 'methods', 'dataTypes', 'journals'):
+            keys = [x['key'] for x in CONFIG[section]]
+            self.assertEqual(len(keys), len(set(keys)), section)
+        families = {f['key'] for f in CONFIG['families']}
+        self.assertTrue(all(f['family'] in families for f in CONFIG['fields']))
+        econ = [j for j in CONFIG['journals'] if j['group'] != 'beyond']
+        self.assertLessEqual(len(econ), 30)
+
+    def test_candidate_normalises_openalex(self):
+        c = cl.candidate(work(), self.journals)
+        self.assertEqual(c['journal'], 'aer')
+        self.assertEqual(c['doi'], '10.1257/aer.1')
+        self.assertEqual(c['abstract'], 'We study wages.')
+        self.assertEqual(c['authors'][0], {'n': 'Ada Lovelace', 'id': 'A1', 'orcid': '0000-1', 'inst': 'MIT', 'cc': 'US'})
+        self.assertEqual(c['_pdfs'], ['https://arxiv.org/pdf/1'])
+        self.assertIsNone(cl.candidate(work(primary_location={'source': {'id': 'S0'}}), self.journals))
+
+    def test_non_research_items_are_skipped(self):
+        for title in ['Front Matter', 'Corrigendum to “X”', 'Book Reviews', 'Report of the Editor',
+                      'The Making of Modern Europe. By Jane Doe. Cambridge University Press, 2024. Pp. 300.']:
+            self.assertFalse(cl.is_research(cl.candidate(work(title=title), self.journals)), title)
+        self.assertTrue(cl.is_research(cl.candidate(work(), self.journals)))
+        self.assertFalse(cl.is_research(cl.candidate(work(authorships=[]), self.journals)))
+
+    def test_conclusion_section_found_after_the_table_of_contents(self):
+        body = 'Intro text. ' * 400
+        text = f'Contents\n1 Introduction\n6 Conclusion\n{body}\n6 Conclusion\nWe find large effects of the policy. ' + 'It matters. ' * 40 + '\nReferences\nSmith (2020).'
+        conc = cl.conclusion_section(text)
+        self.assertTrue(conc.startswith('We find large effects'))
+        self.assertNotIn('Smith (2020)', conc)
+        self.assertEqual(cl.conclusion_section('no headings here ' * 300), '')
+
+    def test_store_keeps_history_and_upgrades_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            store.add({'id': 'W1', 'doi': 'd1', 'added': '2026-10-02', 'published': '2026-10-01', 'title': 'A', 'topics': ['x'], 'by': 'rules'})
+            store.save({'at': '2026-10-02T05:00:00+00:00', 'added': 1})
+            store = cl.Store(Path(tmp))
+            store.add({'id': 'W2', 'doi': 'd2', 'added': '2026-11-12', 'published': '2026-11-01', 'title': 'B', 'topics': ['x', 'y'], 'by': 'rules'})
+            old = next(p for _, p in store.papers() if p['id'] == 'W1')
+            old['by'] = 'claude-opus-5-5'
+            store.touch(old)
+            store.save({'at': '2026-11-12T05:00:00+00:00', 'added': 1})
+            index = json.loads((Path(tmp) / 'index.json').read_text())
+            self.assertEqual(index['total'], 2)
+            self.assertEqual([s['month'] for s in index['shards']], ['2026-11', '2026-10'])
+            self.assertEqual(len(index['runs']), 2)
+            reread = cl.Store(Path(tmp))
+            self.assertEqual(reread.known()[0], {'W1', 'W2'})
+            self.assertEqual(next(p for _, p in reread.papers() if p['id'] == 'W1')['by'], 'claude-opus-5-5')
+            self.assertEqual(reread.top_topics(), ['x', 'y'])
+
+    def test_trickling_download_hits_the_deadline(self):
+        import socket
+        import threading
+        import time as clock
+        server = socket.socket()
+        server.bind(('127.0.0.1', 0))
+        server.listen(1)
+
+        def trickle():
+            conn, _ = server.accept()
+            conn.recv(1024)
+            conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n')
+            try:
+                for _ in range(40):
+                    conn.sendall(b'x')
+                    clock.sleep(0.1)
+            except OSError:
+                pass
+            conn.close()
+
+        threading.Thread(target=trickle, daemon=True).start()
+        started = clock.monotonic()
+        with self.assertRaises(TimeoutError):
+            cl.fetch(f'http://127.0.0.1:{server.getsockname()[1]}/slow.pdf', timeout=0.5, retries=1)
+        self.assertLess(clock.monotonic() - started, 3)
+        server.close()
+
+    def test_excerpt_is_capped(self):
+        self.assertTrue(cl.excerpt('word ' * 300).endswith('…'))
+        self.assertEqual(len(cl.excerpt('word ' * 300).split()), 181)
+
+
+class Enrichment(unittest.TestCase):
+    def test_rules_tag_from_text_and_journal(self):
+        paper = {'title': 'Staggered Minimum Wage Increases and Employment', 'journal': 'jole', 'authors': []}
+        abstract = ('We study how minimum wage increases affect employment in the United States between 1990 and 2015. '
+                    'Using a staggered difference-in-differences design with administrative data, we find small effects.')
+        r = enrich.rules(paper, abstract, '', TAX, ['Minimum wage', 'Employment'])
+        self.assertEqual(r['fields'][0], 'labour')
+        self.assertIn('did', r['methods'])
+        self.assertIn('staggered-did', r['methods'])
+        self.assertIn('admin', r['data'])
+        self.assertIn('United States', r['geo'])
+        self.assertEqual(r['period'], '1990–2015')
+        self.assertTrue(r['q'].startswith('We study'))
+
+    def test_validate_drops_unknown_keys(self):
+        out = enrich.validate({'summary': 'S.', 'fields': ['labour', 'astrology'], 'methods': ['staggered-did', 'magic'],
+                               'data_types': ['admin', 'tea leaves'], 'topics': ['Minimum Wage', 'x'], 'jel': ['J31', 'bad']}, TAX)
+        self.assertEqual(out['fields'], ['labour'])
+        self.assertEqual(out['methods'], ['did', 'staggered-did'])
+        self.assertEqual(out['data'], ['admin'])
+        self.assertEqual(out['topics'], ['minimum wage'])
+        self.assertEqual(out['jel'], ['J31'])
+        with self.assertRaises(enrich.EnrichError):
+            enrich.validate({'summary': '', 'fields': ['labour']}, TAX)
+
+    def test_schema_and_prompt_cover_the_taxonomy(self):
+        schema = enrich.output_schema(TAX)
+        self.assertEqual(schema['properties']['methods']['items']['enum'], TAX.method_keys)
+        self.assertFalse(schema['additionalProperties'])
+        prompt = enrich.system_prompt(TAX, ['minimum wage'])
+        self.assertIn('staggered-did', prompt)
+        self.assertIn('minimum wage', prompt)
+
+    def test_parse_json_text_tolerates_fences(self):
+        self.assertEqual(enrich.parse_json_text('```json\n{"a": 1}\n```'), {'a': 1})
+        with self.assertRaises(enrich.EnrichError):
+            enrich.parse_json_text('no json')
+
+    def test_no_key_means_rules(self):
+        self.assertIsNone(enrich.choose_provider(TAX, env={}))
+
+    def test_enrich_all_falls_back_per_paper_and_stops_on_quota(self):
+        class Fake:
+            name, workers = 'fake-model', 1
+
+            def __init__(self):
+                self.calls = 0
+
+            def enrich(self, message):
+                self.calls += 1
+                if 'Title: bad' in message:
+                    raise enrich.EnrichError('nonsense answer')
+                if 'Title: quota' in message:
+                    raise enrich.QuotaReached('daily allowance')
+                return enrich.validate({'question': 'Q?', 'summary': 'S.', 'fields': ['macro'], 'methods': ['iv'], 'topics': []}, TAX)
+
+        def item(title):
+            record = {'id': title, 'title': title, 'journal': 'aer', 'authors': [], 'published': '2026-11-01'}
+            return (record, 'We study inflation.', '', ['Inflation'], '')
+
+        items = [item('good'), item('bad'), item('quota'), item('after')]
+        stats = {'llm': 0, 'llm_failed': 0, 'rules': 0}
+        fake = Fake()
+        cl.enrich_all(items, fake, TAX, stats)
+        by = {r['id']: r['by'] for r, *_ in items}
+        self.assertEqual(by, {'good': 'fake-model', 'bad': 'rules', 'quota': 'rules', 'after': 'rules'})
+        self.assertEqual(fake.calls, 3, 'no call after the allowance ran out')
+        self.assertEqual(items[0][0]['topics'], ['inflation'], 'keywords fill empty topics')
+        self.assertEqual(items[0][0]['text'], ['abstract'])
+        self.assertEqual(stats, {'llm': 1, 'llm_failed': 1, 'rules': 3})
+
+
+if __name__ == '__main__':
+    unittest.main()
