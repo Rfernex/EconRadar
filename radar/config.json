@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Shared by tools/collect_literature.py (what to fetch, how to tag) and the Literature Radar app (labels, colours, filters). Add a journal by appending to `journals` with its OpenAlex source id (https://api.openalex.org/sources/issn:XXXX-XXXX). Set `enabled` to false to stop collecting from it; papers already collected stay.",
+  "about": "Shared by tools/collect_literature.py (what to fetch, how to tag) and the Literature Radar app (labels, colours, filters). Add a journal by appending to `journals` with its OpenAlex source id (https://api.openalex.org/sources/issn:XXXX-XXXX). A working-paper series takes kind \"working\" and, optionally, a pdfTemplate where {id} is the DOI suffix. Set `enabled` to false to stop collecting from it; papers already collected stay.",
   "lookbackDays": 60,
   "families": [
     {"key": "labour", "label": "Labour & human capital", "slot": 1},
@@ -97,7 +97,8 @@
   "journalGroups": [
     {"key": "general", "label": "General interest"},
     {"key": "field", "label": "Top field journals"},
-    {"key": "beyond", "label": "Beyond economics"}
+    {"key": "beyond", "label": "Beyond economics"},
+    {"key": "working", "label": "Working papers"}
   ],
   "journals": [
     {"key": "aer", "short": "AER", "name": "American Economic Review", "openalex": "S23254222", "issn": "0002-8282", "group": "general", "fields": [], "enabled": true},
@@ -131,6 +132,7 @@
     {"key": "apsr", "short": "APSR", "name": "American Political Science Review", "openalex": "S176007004", "issn": "0003-0554", "group": "beyond", "fields": ["political-science"], "enabled": true},
     {"key": "ajps", "short": "AJPS", "name": "American Journal of Political Science", "openalex": "S90314269", "issn": "0092-5853", "group": "beyond", "fields": ["political-science"], "enabled": true},
     {"key": "asr", "short": "ASR", "name": "American Sociological Review", "openalex": "S157620343", "issn": "0003-1224", "group": "beyond", "fields": ["sociology"], "enabled": true},
-    {"key": "nhb", "short": "Nat. Hum. Behav.", "name": "Nature Human Behaviour", "openalex": "S2764866340", "issn": "2397-3374", "group": "beyond", "fields": ["psychology"], "enabled": true}
+    {"key": "nhb", "short": "Nat. Hum. Behav.", "name": "Nature Human Behaviour", "openalex": "S2764866340", "issn": "2397-3374", "group": "beyond", "fields": ["psychology"], "enabled": true},
+    {"key": "nber", "short": "NBER WP", "name": "NBER Working Papers", "openalex": "S2809516038", "issn": "0898-2937", "group": "working", "kind": "working", "pdfTemplate": "https://www.nber.org/system/files/working_papers/{id}/{id}.pdf", "fields": [], "enabled": true}
   ]
 }

@@ -36,8 +36,10 @@ class Collector(unittest.TestCase):
             self.assertEqual(len(keys), len(set(keys)), section)
         families = {f['key'] for f in CONFIG['families']}
         self.assertTrue(all(f['family'] in families for f in CONFIG['fields']))
-        econ = [j for j in CONFIG['journals'] if j['group'] != 'beyond']
+        econ = [j for j in CONFIG['journals'] if j['group'] in ('general', 'field')]
         self.assertLessEqual(len(econ), 30)
+        groups = {g['key'] for g in CONFIG['journalGroups']}
+        self.assertTrue(all(j['group'] in groups for j in CONFIG['journals']))
 
     def test_candidate_normalises_openalex(self):
         c = cl.candidate(work(), self.journals)
@@ -47,6 +49,15 @@ class Collector(unittest.TestCase):
         self.assertEqual(c['authors'][0], {'n': 'Ada Lovelace', 'id': 'A1', 'orcid': '0000-1', 'inst': 'MIT', 'cc': 'US'})
         self.assertEqual(c['_pdfs'], ['https://arxiv.org/pdf/1'])
         self.assertIsNone(cl.candidate(work(primary_location={'source': {'id': 'S0'}}), self.journals))
+
+    def test_nber_working_papers_get_their_own_pdf_and_kind(self):
+        w = work(id='https://openalex.org/W9', doi='https://doi.org/10.3386/w36000', type='report',
+                 primary_location={'source': {'id': 'https://openalex.org/S2809516038'}},
+                 best_oa_location={'pdf_url': 'https://doi.org/10.3386/w36000'}, locations=[])
+        c = cl.candidate(w, self.journals)
+        self.assertEqual(c['journal'], 'nber')
+        self.assertEqual(c['kind'], 'working')
+        self.assertEqual(c['_pdfs'][0], 'https://www.nber.org/system/files/working_papers/w36000/w36000.pdf')
 
     def test_non_research_items_are_skipped(self):
         for title in ['Front Matter', 'Corrigendum to “X”', 'Book Reviews', 'Report of the Editor',
@@ -128,15 +139,25 @@ class Enrichment(unittest.TestCase):
         self.assertIn('United States', r['geo'])
         self.assertEqual(r['period'], '1990–2015')
         self.assertTrue(r['q'].startswith('We study'))
+        self.assertIn('staggered difference-in-differences', r['ident'])
+
+    def test_rules_pick_a_contribution_sentence(self):
+        abstract = ('We study railways in nineteenth-century France. We provide the first causal evidence that rail access raised literacy. '
+                    'Using an instrumental variables strategy based on straight lines between cities, we find large effects.')
+        extras = enrich.rule_extras(abstract, '', TAX)
+        self.assertTrue(extras['contribution'].startswith('We provide the first causal evidence'))
+        self.assertTrue(extras['ident'].startswith('Using an instrumental variables strategy'))
 
     def test_validate_drops_unknown_keys(self):
-        out = enrich.validate({'summary': 'S.', 'fields': ['labour', 'astrology'], 'methods': ['staggered-did', 'magic'],
+        out = enrich.validate({'summary': 'S.', 'contribution': '  Provides new  evidence. ', 'fields': ['labour', 'astrology'], 'methods': ['staggered-did', 'magic'],
                                'data_types': ['admin', 'tea leaves'], 'topics': ['Minimum Wage', 'x'], 'jel': ['J31', 'bad']}, TAX)
         self.assertEqual(out['fields'], ['labour'])
+        self.assertEqual(out['contribution'], 'Provides new evidence.')
         self.assertEqual(out['methods'], ['did', 'staggered-did'])
         self.assertEqual(out['data'], ['admin'])
         self.assertEqual(out['topics'], ['minimum wage'])
         self.assertEqual(out['jel'], ['J31'])
+        self.assertIn('contribution', enrich.output_schema(TAX)['required'])
         with self.assertRaises(enrich.EnrichError):
             enrich.validate({'summary': '', 'fields': ['labour']}, TAX)
 

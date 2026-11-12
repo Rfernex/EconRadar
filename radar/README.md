@@ -1,6 +1,6 @@
 # Literature Radar
 
-New papers from the top economics journals (and a few beyond economics), collected twice a week, summarised, tagged and mapped. Installable like the other apps; it works offline with the last papers it loaded.
+New papers from the top economics journals and NBER working papers (and a few journals beyond economics), collected twice a week, summarised, tagged and mapped. Installable like the other apps; it works offline with the last papers it loaded.
 
 ## What it does
 
@@ -12,13 +12,13 @@ New papers from the top economics journals (and a few beyond economics), collect
   - **Replay history** rebuilds the network week by week by publication date. Click a node, then one of its ties, to list the papers that combine the two.
 - **Authors**: who is active in what (heat map by field family), sortable by output, recent activity or name; profiles with field/method mix, co-authors and papers. Follow authors to have their new papers flagged.
 - **Trends**: papers per quarter or month by field family; methods, data, topics or fields over time (share of papers, small multiples); what is rising or fading (last 90 days against before); a **frontier log** of firsts (the first time a method or data source shows up in a field since the radar started); the latest research questions.
-- **Filters** (shared by every view): text search, date added, field or field family, method, data, journal, author, saved, unread, followed authors, model-summarised only.
+- **Filters** (shared by every view): text search, publication date (presets or a range; NBER papers are dated to the month), field or field family, method, data, source (journal or NBER), author, saved, unread, followed authors, model-summarised only. On Latest, the update chips show what one collection added.
 
 ## Where the papers come from
 
 `tools/collect_literature.py` runs from `.github/workflows/literature-radar.yml` every Monday and Thursday at 05:23 UTC:
 
-1. **OpenAlex** lists articles in the journals of `config.json` published in the last 60 days that are not yet stored (authors with stable ids, institutions, abstracts).
+1. **OpenAlex** lists articles in the journals of `config.json`, and NBER working papers, published in the last 60 days and not yet stored (authors with stable ids, institutions, abstracts). NBER papers are read from NBER's own open PDFs.
 2. Missing abstracts come from **Crossref** and **Semantic Scholar**. When a legal open-access PDF exists (arXiv, repositories, open publisher copies), its conclusion section is extracted. Publishers that block scripts (Wiley, OUP, ScienceDirect, SSRN…) are skipped, never worked around.
 3. `tools/radar_enrich.py` writes the question, summary, conclusion, identification strategy, data description, and tags (fields, methods, data types, topics, geography, period, JEL) with **Claude** (`ANTHROPIC_API_KEY`) or **OpenRouter** free models (`OPENROUTER_API_KEY`), validated against the lists in `config.json`. Without a key, keyword rules tag the paper (marked “auto-extracted”); each later run upgrades up to 60 of those once a key exists.
 4. Papers are appended to `data/papers-YYYY-MM.json` (by month added) and `data/index.json` keeps the shard list and the run log. Nothing is ever removed, so the network and trends grow over time. Abstracts are kept as excerpts of at most 180 words with a link to the article; PDF text is never stored.

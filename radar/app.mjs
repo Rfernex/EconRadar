@@ -1,4 +1,4 @@
-import * as C from './core.mjs?v=1';
+import * as C from './core.mjs?v=2';
 import { createNetwork } from './graph.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
@@ -74,7 +74,7 @@ async function load() {
 }
 
 function refresh({ keepNetwork = false } = {}) {
-  S.visible = C.filterPapers(S.papers, S.filters, S.ctx, { user: S.user, today: S.today, lastRun: S.lastRun });
+  S.visible = C.filterPapers(S.papers, S.filters, S.ctx, { user: S.user, today: S.today });
   S.limit = 30;
   updateFilterUI();
   const n = S.visible.length;
@@ -99,9 +99,9 @@ function renderFilters() {
   const journalGroups = c.journalGroups.map(g => ({ label: g.label, options: c.journals.filter(j => j.group === g.key).map(j => ({ value: j.key, label: `${j.short} · ${j.name}`, count: journalN[j.key] })) }));
   $('#filter-bar').innerHTML = `<div class="filter-row">
     <input type="search" id="f-q" placeholder="Search titles, questions, topics, authors, data…" aria-label="Search papers" value="${esc(S.filters.q)}">
-    <select id="f-period" aria-label="Date added">${[['all', 'Any time'], ['last-run', 'Last update'], ['7d', 'Past 7 days'], ['30d', 'Past 30 days'], ['90d', 'Past 90 days'], ['180d', 'Past 6 months'], ['365d', 'Past year'], ['custom', 'Custom dates…']].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
-    <span id="f-custom" class="toolbar" hidden><input type="date" id="f-from" aria-label="Added from"><input type="date" id="f-to" aria-label="Added until"></span>
-    ${pickerHtml('fields', 'Field', fieldGroups)}${pickerHtml('methods', 'Method', methodGroups)}${pickerHtml('data', 'Data', dataGroups)}${pickerHtml('journals', 'Journal', journalGroups)}
+    <select id="f-period" aria-label="Publication date">${[['all', 'Published: any time'], ['7d', 'Published: past 7 days'], ['30d', 'Published: past 30 days'], ['90d', 'Published: past 3 months'], ['180d', 'Published: past 6 months'], ['365d', 'Published: past year'], ['custom', 'Published between…']].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+    <span id="f-custom" class="toolbar" hidden><input type="date" id="f-from" aria-label="Published from"><input type="date" id="f-to" aria-label="Published until"></span>
+    ${pickerHtml('fields', 'Field', fieldGroups)}${pickerHtml('methods', 'Method', methodGroups)}${pickerHtml('data', 'Data', dataGroups)}${pickerHtml('journals', 'Source', journalGroups)}
     <details class="pick" data-pick="authors"><summary>Author <b hidden></b></summary><div class="pick-panel"><input type="search" placeholder="Type a name…" aria-label="Find an author" id="f-author-q"><div id="f-author-list"></div></div></details>
     <button type="button" class="btn ghost small" data-toggle="saved" aria-pressed="false">★ Saved</button>
     <button type="button" class="btn ghost small" data-toggle="unread" aria-pressed="false">Unread</button>
@@ -135,7 +135,8 @@ function updateFilterUI() {
   const chips = [];
   const chip = (kind, value, text, dot = '') => chips.push(`<span class="chip removable">${dot}${esc(text)}<button type="button" data-remove="${kind}" data-value="${esc(value)}" aria-label="Remove ${esc(text)}">×</button></span>`);
   if (f.q) chip('q', '', `“${f.q}”`);
-  if (f.period !== 'all') chip('period', '', f.period === 'custom' ? `Added ${f.from || '…'} – ${f.to || '…'}` : $('#f-period').selectedOptions[0].textContent);
+  if (f.period !== 'all') chip('period', '', f.period === 'custom' ? `Published ${f.from ? dayLabel(f.from) : '…'} – ${f.to ? dayLabel(f.to) : '…'}` : $('#f-period').selectedOptions[0].textContent);
+  if (f.run) chip('run', '', `Added in the ${dayLabel(f.run)} update`);
   f.families.forEach(k => chip('families', k, S.ctx.label('family', k), `<i class="dot" style="background:${famVar(k)}"></i>`));
   f.fields.forEach(k => chip('fields', k, S.ctx.label('field', k), fieldDot(k)));
   f.methods.forEach(k => chip('methods', k, S.ctx.label('method', k)));
@@ -171,7 +172,7 @@ function bindFilters() {
     const t = e.target.closest('button'); if (!t) return;
     if (t.dataset.toggle) setFilter(f => { f[t.dataset.toggle] = !f[t.dataset.toggle]; });
     else if (t.dataset.family) setFilter(f => toggleIn(f.families, t.dataset.family));
-    else if (t.dataset.remove) setFilter(f => { const k = t.dataset.remove; if (k === 'q') f.q = ''; else if (k === 'period') f.period = 'all'; else toggleIn(f[k], t.dataset.value); });
+    else if (t.dataset.remove) setFilter(f => { const k = t.dataset.remove; if (k === 'q') f.q = ''; else if (k === 'period') f.period = 'all'; else if (k === 'run') f.run = ''; else toggleIn(f[k], t.dataset.value); });
     else if (t.id === 'f-clear') setFilter(f => Object.assign(f, C.EMPTY_FILTERS, { families: [], fields: [], methods: [], data: [], journals: [], authors: [] }));
   });
   // One open picker at a time; click outside closes it.
@@ -228,15 +229,24 @@ function tagChips(p, { firstsToo = true } = {}) {
   if (firstsToo) for (const item of (S.firsts.get(p.id) || []).filter(i => i.kind !== 'topic').slice(0, 2)) chips.push(`<span class="chip first" title="New to the radar since it started">✦ ${esc(C.describeFirst(item, S.ctx))}</span>`);
   return chips.join('');
 }
+// Contribution and identification, labelled; rule-extracted text is shown muted.
+function keyLines(p) {
+  const auto = C.byModel(p) ? '' : ' auto';
+  const design = p.methods.filter(m => S.ctx.methods.get(m)?.group !== 'other').map(m => S.ctx.label('method', m));
+  const ident = p.ident || (design.length ? design.join(' · ') : '');
+  return (p.contribution ? `<p class="p-line${auto}"><b>Contribution</b>${esc(p.contribution)}</p>` : '')
+    + (ident ? `<p class="p-line${auto}"><b>Identification</b>${esc(ident)}</p>` : '');
+}
 function paperCard(p) {
   const saved = !!S.user.saved[p.id], read = !!S.user.read[p.id], model = C.byModel(p);
   const question = p.q ? `<p class="p-question ${model ? '' : 'auto'}">${model ? esc(p.q) : `<span class="badge auto">AUTO-EXTRACTED</span> ${esc(p.q)}`}</p>` : '';
   const conclusion = p.conclusion ? `<details class="more"><summary>${p.text.includes('conclusion') ? 'Conclusion' : 'Implications'}</summary><p class="p-summary">${esc(p.conclusion)}</p></details>` : '';
   return `<article class="paper ${read ? 'is-read' : ''}" data-id="${esc(p.id)}">
-    <div class="p-meta"><span class="journal">${esc(journalShort(p.journal))}</span><span>${p.published ? 'Published ' + dayLabel(p.published) : ''}</span>${isNewToYou(p) ? '<span class="badge new">NEW</span>' : ''}${p.kind === 'review' ? '<span class="badge auto">SURVEY</span>' : ''}${S.user.notes[p.id] ? '<span class="badge auto">NOTE</span>' : ''}</div>
+    <div class="p-meta"><span class="journal">${esc(journalShort(p.journal))}</span><span>${p.published ? 'Published ' + dayLabel(p.published) : ''}</span>${isNewToYou(p) ? '<span class="badge new">NEW</span>' : ''}${p.kind === 'review' ? '<span class="badge auto">SURVEY</span>' : ''}${p.kind === 'working' ? '<span class="badge auto">WORKING PAPER</span>' : ''}${S.user.notes[p.id] ? '<span class="badge auto">NOTE</span>' : ''}</div>
     <h3 class="p-title"><button type="button" data-act="open">${esc(p.title)}</button></h3>
     <div class="p-authors">${authorLinks(p)}</div>
     ${question}
+    ${keyLines(p)}
     ${p.summary ? `<p class="p-summary">${esc(p.summary)}</p>` : '<p class="p-summary muted">No abstract was available from the indexes for this paper yet.</p>'}
     ${conclusion}
     <div class="p-tags">${tagChips(p)}</div>
@@ -257,7 +267,10 @@ function latestHtml() {
   const list = sortPapers(S.visible), shown = list.slice(0, S.limit);
   const sinceVisit = S.prevVisit ? S.papers.filter(isNewToYou).length : 0;
   const modelShare = S.visible.length ? S.visible.filter(C.byModel).length / S.visible.length : 0;
-  const runs = (S.index.runs || []).slice(0, 8);
+  // One chip per day: several runs on the same day (a backfill, a manual re-run) are one update.
+  const byDay = new Map();
+  for (const r of S.index.runs || []) { const day = r.at.slice(0, 10); byDay.set(day, (byDay.get(day) || 0) + (r.added || 0)); }
+  const runs = [...byDay].slice(0, 8).map(([day, added]) => ({ at: day, added }));
   let body = '', lastDay = '';
   for (const p of shown) {
     if (S.prefs.sort === 'added' && p.added !== lastDay) {
@@ -271,14 +284,14 @@ function latestHtml() {
   }
   if (S.prefs.sort === 'added' && body) body += '</div>'; else body = `<div class="papers">${body}</div>`;
   return `<div class="heading"><div><span class="eyebrow">${S.lastRun ? 'Updated ' + dayLabel(S.lastRun) : 'Literature Radar'}</span><h1>Latest papers</h1>
-      <p>New articles from ${S.config.journals.filter(j => j.enabled !== false).length} journals, each with its research question, a summary, and tags for field, method and data. Click any tag to filter by it.</p></div>
+      <p>New articles from ${S.config.journals.filter(j => j.enabled !== false && j.kind !== 'working').length} journals${S.config.journals.some(j => j.enabled !== false && j.kind === 'working') ? ' and ' + S.config.journals.filter(j => j.enabled !== false && j.kind === 'working').map(j => j.short.replace(/ WP$/, '')).join(', ') + ' working papers' : ''}, each with its research question, a summary, and tags for field, method and data. Click any tag to filter by it.</p></div>
       <div class="toolbar"><select id="sort" aria-label="Sort papers">${[['added', 'Date added'], ['published', 'Publication date'], ['journal', 'Journal']].map(([v, l]) => `<option value="${v}" ${S.prefs.sort === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="export" aria-label="Export these papers"><option value="">Export…</option><option value="bib">BibTeX</option><option value="ris">RIS (Zotero)</option><option value="csv">CSV</option></select></div></div>
     <div class="stats"><div class="stat"><strong>${fmt(S.visible.length)}</strong><span>papers in view</span></div>
       <div class="stat"><strong>${fmt(sinceVisit)}</strong><span>new since your last visit${S.prevVisit ? ' (' + dayLabel(S.prevVisit, { day: 'numeric', month: 'short' }) + ')' : ''}</span></div>
       <div class="stat"><strong>${pct(modelShare)}</strong><span>summarised by the model; the rest are auto-extracted</span></div>
       <div class="stat"><strong>${fmt(new Set(S.visible.map(p => p.journal)).size)}</strong><span>journals represented</span></div></div>
-    ${runs.length > 1 ? `<div class="chips" aria-label="Recent updates">${runs.map(r => `<button type="button" class="chip btnish" data-act="run" data-day="${r.at.slice(0, 10)}">${dayLabel(r.at.slice(0, 10), { day: 'numeric', month: 'short' })} · ${plural(r.added, 'paper')}</button>`).join('')}</div>` : ''}
+    ${runs.length > 1 ? `<div class="chips" aria-label="Recent updates">${runs.map(r => `<button type="button" class="chip btnish" data-act="run" data-day="${r.at.slice(0, 10)}" aria-pressed="${S.filters.run === r.at.slice(0, 10)}" title="Papers added in this update">${dayLabel(r.at.slice(0, 10), { day: 'numeric', month: 'short' })} · ${plural(r.added, 'paper')}</button>`).join('')}</div>` : ''}
     ${shown.length ? body : '<div class="empty"><h2>Nothing matches these filters</h2><p>Loosen a filter above, or clear them all.</p></div>'}
     ${list.length > shown.length ? `<div class="load-more"><button type="button" class="btn ghost" data-act="more">Show ${Math.min(30, list.length - shown.length)} more of ${fmt(list.length - shown.length)}</button></div>` : ''}`;
 }
@@ -313,10 +326,11 @@ function openPaper(id) {
     <h2>${esc(p.title)}</h2>
     <div class="p-authors">${authorLinks(p, 40)}</div>
     ${p.q ? `<p class="p-question ${C.byModel(p) ? '' : 'auto'}" style="margin-top:14px">${esc(p.q)}</p>` : ''}
+    <div style="display:grid;gap:6px;margin:10px 0">${keyLines(p)}</div>
     <p class="p-summary">${esc(p.summary)}</p>
     ${p.conclusion ? `<h3 style="margin-top:14px">${p.text.includes('conclusion') ? 'What the conclusion says' : 'Implications'}</h3><p class="p-summary">${esc(p.conclusion)}</p>` : ''}
     <dl class="detail-grid">
-      ${row('Identification', esc(p.ident))}${row('Data', esc([p.dataDetail, p.data.map(k => S.ctx.label('data', k)).join(', ')].filter(Boolean).join(' — ')))}
+      ${row('Data', esc([p.dataDetail, p.data.map(k => S.ctx.label('data', k)).join(', ')].filter(Boolean).join(' — ')))}
       ${row('Setting', esc([p.geo.join(', '), p.period].filter(Boolean).join(' · ')))}${row('Fields', p.fields.map(k => fieldDot(k) + ' ' + esc(S.ctx.label('field', k))).join(', '))}
       ${row('Methods', esc(p.methods.map(k => S.ctx.label('method', k)).join(', ')))}${row('Topics', esc(p.topics.join(', ')))}${row('JEL', esc(p.jel.join(', ')))}
       ${row('Added to radar', dayLabel(p.added))}${row('Summary from', esc((C.byModel(p) ? p.by : 'automatic extraction (no model yet)') + (p.text.length ? ` · based on the ${p.text.join(' and ')}` : ' · title only')))}
@@ -354,7 +368,7 @@ function onMainClick(e) {
   else if (act === 'tag') { $('#dialog').open && $('#dialog').close(); setFilter(f => { if (!f[t.dataset.kind].includes(t.dataset.key)) f[t.dataset.kind].push(t.dataset.key); }); toast(`Filtered by ${t.textContent.trim()}`); }
   else if (act === 'search') { setFilter(f => { f.q = t.dataset.q; }); toast(`Searching “${t.dataset.q}”`); }
   else if (act === 'more') { S.limit += 30; const y = window.scrollY; $('#main').innerHTML = latestHtml(); window.scrollTo(0, y); }
-  else if (act === 'run') setFilter(f => { f.period = 'custom'; f.from = t.dataset.day; f.to = t.dataset.day; });
+  else if (act === 'run') setFilter(f => { f.run = f.run === t.dataset.day ? '' : t.dataset.day; });
   else if (act === 'cite') { const p = S.papers.find(x => x.id === id); navigator.clipboard?.writeText(C.toBibtex(p, S.ctx)).then(() => toast('BibTeX copied.'), () => toast('Copy failed; use Export instead.')); }
   else if (act === 'in-network') { $('#dialog').close(); S.prefs.lens = 'papers'; savePrefs(); S.net.pending = id; location.hash = 'network'; if (S.view === 'network') renderNetwork(); }
   else if (act === 'follow') { const k = t.dataset.key, on = !S.user.follow[k]; if (on) S.user.follow[k] = S.today; else delete S.user.follow[k]; saveUser(); t.setAttribute('aria-pressed', String(on)); t.textContent = on ? '★ Following' : '☆ Follow'; toast(on ? 'Following — their new papers are marked in Latest.' : 'Unfollowed.'); }
@@ -707,7 +721,7 @@ function sourcesHtml() {
       <div class="stat"><strong>${nr ? nr.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</strong><span>next scheduled update (Mon & Thu, ~06:30 Paris)</span></div><div class="stat"><strong>${pct(S.papers.length ? model / S.papers.length : 0)}</strong><span>summarised by a model · ${pct(S.papers.length ? withConc / S.papers.length : 0)} also read the conclusion</span></div></div>
     ${model < S.papers.length ? `<div class="notice warn" style="margin-bottom:16px"><b>${fmt(S.papers.length - model)} papers have automatic summaries only.</b> They were tagged with keyword rules because the collector had no model key. Add one (below) and each update upgrades the most recent ${'60'} of them, or start a larger catch-up by hand.</div>` : ''}
     <div class="grid-2"><div class="panel setup"><span class="eyebrow">How it works</span>
-        <ol><li>Every Monday and Thursday a GitHub Action (<code>.github/workflows/literature-radar.yml</code>) asks <b>OpenAlex</b> for new articles in the journals below, published in the last ${S.config.lookbackDays} days and not yet in the radar.</li>
+        <ol><li>Every Monday and Thursday a GitHub Action (<code>.github/workflows/literature-radar.yml</code>) asks <b>OpenAlex</b> for new articles in the journals below and new NBER working papers, published in the last ${S.config.lookbackDays} days and not yet in the radar.</li>
         <li>Missing abstracts are filled from <b>Crossref</b> and <b>Semantic Scholar</b>. When a legal open-access copy exists (arXiv, repositories, open publisher PDFs), its <b>conclusion section</b> is read. Publishers that block scripts are skipped.</li>
         <li>A model writes the research question, summary and conclusion, and tags fields, methods, identification, data, topics, setting and JEL codes against the fixed lists in <code>radar/config.json</code>. Without a key, keyword rules tag the paper and it is upgraded later.</li>
         <li>Papers are only ever added, never dropped, so the network and trends build up over time.</li></ol></div>
@@ -716,8 +730,8 @@ function sourcesHtml() {
         <li>Name it <code>ANTHROPIC_API_KEY</code> (Claude, recommended) or <code>OPENROUTER_API_KEY</code> (free models, slower and rate-limited). Paste the key there, never in the app or in chat.</li>
         <li>Optional: a variable <code>RADAR_MODEL</code> picks the Claude model (default <code>claude-opus-5-5</code>; <code>claude-haiku-5-5</code> costs about 1/40th), and a free <code>OPENALEX_API_KEY</code> secret avoids OpenAlex's shared daily budget.</li>
         <li>To catch up on old papers at once: <b>Actions → Literature Radar → Run workflow</b>, with “papers to re-summarise” set to e.g. 1500 to redo them all.</li></ol></div></div>
-    <div class="section-head"><h2>Journals</h2><p>Edit <code>radar/config.json</code> to add or pause one</p></div>
-    <div class="panel table-scroll"><table class="data"><thead><tr><th>Journal</th><th class="num">Papers</th><th>Last added</th><th>Status</th></tr></thead><tbody>${journals}</tbody></table></div>
+    <div class="section-head"><h2>Journals & working papers</h2><p>Edit <code>radar/config.json</code> to add or pause one</p></div>
+    <div class="panel table-scroll"><table class="data"><thead><tr><th>Source</th><th class="num">Papers</th><th>Last added</th><th>Status</th></tr></thead><tbody>${journals}</tbody></table></div>
     <div class="section-head"><h2>Update log</h2></div>
     <div class="panel table-scroll">${runs.length ? `<table class="data"><thead><tr><th>When</th><th class="num">Added</th><th class="num">Upgraded</th><th>Summaries by</th><th class="num">PDFs read</th><th class="num">Seconds</th></tr></thead><tbody>${runs.slice(0, 25).map(r => `<tr><td>${new Date(r.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</td><td class="num">${r.added}</td><td class="num">${r.upgraded || 0}</td><td class="small">${esc(r.provider)}${r.failed ? ` · ${r.failed} failed` : ''}</td><td class="num">${r.pdfs || 0}</td><td class="num">${r.seconds || ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No runs yet.</p>'}</div>
     <div class="section-head"><h2>Your data</h2><p>Saved papers, read marks, notes and followed authors live in this browser only</p></div>
@@ -779,7 +793,7 @@ async function start() {
   renderFilters(); bindFilters(); bindMain(); sideStatus();
   window.addEventListener('hashchange', route);
   if (!S.config.journals) return;
-  S.visible = C.filterPapers(S.papers, S.filters, S.ctx, { user: S.user, today: S.today, lastRun: S.lastRun });
+  S.visible = C.filterPapers(S.papers, S.filters, S.ctx, { user: S.user, today: S.today });
   updateFilterUI();
   $('#top-count').textContent = S.visible.length === S.papers.length ? plural(S.papers.length, 'paper') : `${fmt(S.visible.length)} of ${plural(S.papers.length, 'paper')}`;
   route();

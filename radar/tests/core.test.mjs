@@ -16,6 +16,7 @@ test('normalisation keeps only known taxonomy keys and drops broken records', ()
   assert.deepEqual(p.fields, ['labour']);
   assert.deepEqual(p.methods, ['rdd']);
   assert.deepEqual(p.topics, ['minimum wage']);
+  assert.equal(paper('W9', { contribution: 'Provides the first estimate.' }).contribution, 'Provides the first estimate.');
   assert.equal(C.normalizePaper({ id: 'x' }, ctx), null);
   assert.equal(C.mergeShards([{ papers: [paper('W1'), paper('W1')] }, { papers: [paper('W2')] }], ctx).length, 2);
 });
@@ -27,12 +28,16 @@ test('filters: within a facet any value matches, across facets all must', () => 
   assert.deepEqual(C.filterPapers(list, { ...C.cleanFilters({}), families: ['history'] }, ctx).map(p => p.id), ['W2']);
   assert.deepEqual(C.filterPapers(list, { ...C.cleanFilters({}), families: ['history'], fields: ['labour'] }, ctx).map(p => p.id), ['W1', 'W2', 'W3'], 'field and family choices combine with OR');
   assert.deepEqual(C.filterPapers(list, { ...C.cleanFilters({}), journals: ['jeh'] }, ctx).map(p => p.id), ['W2']);
-  assert.deepEqual(C.filterPapers(list, { ...C.cleanFilters({}), period: '30d' }, ctx, { today: '2026-11-12' }).map(p => p.id), ['W1', 'W2']);
+  const dated = [paper('D1', { published: '2026-11-01', added: '2026-11-12' }), paper('D2', { published: '2026-06-01', added: '2026-11-12' }), paper('D3', { published: '', added: '2026-11-05' })];
+  assert.deepEqual(C.filterPapers(dated, { ...C.cleanFilters({}), period: '30d' }, ctx, { today: '2026-11-12' }).map(p => p.id), ['D1', 'D3'], 'publication date, falling back to the day added');
+  assert.deepEqual(C.filterPapers(dated, { ...C.cleanFilters({}), period: 'custom', from: '2026-05-01', to: '2026-06-30' }, ctx).map(p => p.id), ['D2']);
+  assert.deepEqual(C.filterPapers(dated, { ...C.cleanFilters({}), run: '2026-11-05' }, ctx).map(p => p.id), ['D3'], 'update chips filter on the day added');
   assert.deepEqual(C.filterPapers(list, { ...C.cleanFilters({}), q: 'lovelace paper w3' }, ctx).map(p => p.id), ['W3']);
   assert.deepEqual(C.filterPapers(list, { ...C.cleanFilters({}), authors: ['A1'], saved: true }, ctx, { user: { saved: { W2: '2026-11-01' } } }).map(p => p.id), ['W2']);
 });
 
 test('cleanFilters rejects junk from storage', () => {
+  assert.equal(C.cleanFilters({ period: 'last-run' }).period, 'all', 'the old date-added preset is dropped');
   const f = C.cleanFilters({ q: 5, fields: 'labour', period: 'forever', saved: 'yes', methods: ['did'] });
   assert.equal(f.q, '5'); assert.deepEqual(f.fields, []); assert.equal(f.period, 'all'); assert.equal(f.saved, false); assert.deepEqual(f.methods, ['did']);
   assert.equal(C.activeFilterCount(f), 2);
@@ -104,6 +109,7 @@ test('exports escape what they must', () => {
   assert.match(C.toRis(p, ctx), /^TY {2}- JOUR\r\n/);
   const csv = C.toCsv([p], ctx).split('\r\n');
   assert.equal(csv.length, 2);
+  assert.match(csv[0], /,question,contribution,summary,/);
   assert.match(csv[1], /,Wages & \{Profits\}: 50% of \$ gains,/);
 });
 
@@ -119,11 +125,11 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['literature-radar-v0', 'reading-room-v26', 'literature-radar-v1'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['literature-radar-v1', 'reading-room-v26', 'literature-radar-v2'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
-  assert.deepEqual(deleted, ['literature-radar-v0']);
+  assert.deepEqual(deleted, ['literature-radar-v1']);
   let response; handlers.fetch({ request: { url: 'https://example.org/Apps/radar/data/index.json', method: 'GET', mode: 'cors' }, respondWith: r => { response = r; } });
   assert.equal(await response, 'cached');
 });

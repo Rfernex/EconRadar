@@ -83,7 +83,7 @@ LEADING_LABEL = re.compile(r'^\s*(?:abstract|summary)\b[\s.:\u2014-]*', re.I)
 
 
 def strip_label(text):
-    return LEADING_LABEL.sub('', clean(text))
+    return LEADING_LABEL.sub('', enrich.respace(text))
 
 
 def excerpt(text, words=180):
@@ -143,7 +143,7 @@ def openalex_works(source_ids, since, key=''):
         chunk = source_ids[i:i + 40]
         cursor, page_no = '*', 1
         while cursor:
-            params = {'filter': f'primary_location.source.id:{"|".join(chunk)},from_publication_date:{since},type:article|review',
+            params = {'filter': f'primary_location.source.id:{"|".join(chunk)},from_publication_date:{since},type:article|review|report|preprint',
                       'per_page': '200', 'select': SELECT, 'sort': 'publication_date:desc'}
             if key:
                 params['api_key'] = key
@@ -199,6 +199,10 @@ def candidate(work, journals):
         url = (loc or {}).get('pdf_url')
         if url and url not in pdfs:
             pdfs.append(url)
+    # A series' own PDF address (e.g. NBER's) goes first: it is open and readable by scripts.
+    template = journal.get('pdfTemplate')
+    if template and doi:
+        pdfs.insert(0, template.replace('{id}', doi.split('/')[-1]))
     keywords = [clean(k.get('display_name')) for k in sorted(work.get('keywords') or [], key=lambda k: -(k.get('score') or 0))]
     biblio = work.get('biblio') or {}
     return {
@@ -210,7 +214,7 @@ def candidate(work, journals):
         'authors': authors[:30],
         'abstract': strip_label(restore_abstract(work.get('abstract_inverted_index'))),
         'url': f'https://doi.org/{doi}' if doi else work['id'],
-        'kind': 'review' if work.get('type') == 'review' else 'article',
+        'kind': 'working' if journal.get('kind') == 'working' else 'review' if work.get('type') == 'review' else 'article',
         '_pdfs': pdfs,
         '_keywords': keywords[:5],
         '_pages': (biblio.get('first_page'), biblio.get('last_page')),
@@ -403,15 +407,16 @@ class Store:
         month = record['added'][:7]
         self.dirty.add(month)
 
-    def save(self, run):
+    def save(self, run=None):
         self.root.mkdir(parents=True, exist_ok=True)
         for month in sorted(self.dirty):
             rows = sorted(self.shards[month], key=lambda p: (p['added'], p.get('published', ''), p['id']), reverse=True)
             write_json(self.root / f'papers-{month}.json', {'version': 1, 'month': month, 'papers': rows})
         shards = [{'month': m, 'file': f'papers-{m}.json', 'count': len(rows)}
                   for m, rows in sorted(self.shards.items(), reverse=True)]
-        runs = ([run] + self.index.get('runs', []))[:300]
-        self.index = {'version': 1, 'generatedAt': run['at'], 'total': sum(s['count'] for s in shards),
+        runs = ([run] if run else []) + self.index.get('runs', [])
+        runs = runs[:300]
+        self.index = {'version': 1, 'generatedAt': run['at'] if run else self.index.get('generatedAt', now_utc().isoformat(timespec='seconds')), 'total': sum(s['count'] for s in shards),
                       'shards': shards, 'runs': runs}
         write_json(self.index_path, self.index)
 
@@ -493,6 +498,8 @@ def parse_args(argv):
     p.add_argument('--time-budget', type=float, default=80,
                    help='minutes after which no new model calls start (the workflow allows 100)')
     p.add_argument('--dry-run', action='store_true', help='print what would be added; write nothing')
+    p.add_argument('--retag-rules', action='store_true',
+                   help='rebuild question, summary, contribution and identification of stored rule-tagged papers, then stop')
     p.add_argument('--data-dir', default=str(DATA), help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
@@ -502,6 +509,23 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     logging.getLogger('pypdf').setLevel(logging.ERROR)
     started = now_utc()
+    if args.retag_rules:
+        config = json.loads(CONFIG.read_text())
+        tax = enrich.Taxonomy(config)
+        store = Store(Path(args.data_dir))
+        done = 0
+        for _, p in store.papers():
+            if p.get('by') == 'rules':
+                # Text lines only: the tags were set with the full conclusion, which is not stored.
+                p['abstract'] = strip_label(p.get('abstract', ''))
+                fresh = enrich.rules(p, p['abstract'], p.get('conclusion', ''), tax, p.get('topics', []))
+                for key in ('q', 'summary', 'contribution', 'ident'):
+                    p[key] = fresh[key]
+                store.touch(p)
+                done += 1
+        store.save()
+        log.info('Rebuilt the text lines of %d rule-tagged papers', done)
+        return None
     deadline = time.monotonic() + args.time_budget * 60
     config = json.loads(CONFIG.read_text())
     tax = enrich.Taxonomy(config)
@@ -514,6 +538,9 @@ def main(argv=None):
     cands, skipped = [], 0
     for w in works:
         c = candidate(w, journals)
+        if c and w.get('type') in ('report', 'preprint') and c['kind'] != 'working':
+            skipped += 1
+            continue
         if not c or c['id'] in known_ids or (c['doi'] and c['doi'] in known_dois):
             continue
         if not is_research(c):

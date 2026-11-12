@@ -28,8 +28,13 @@ def clean(value, limit=None):
     return text[:limit].rstrip() if limit and len(text) > limit else text
 
 
+def respace(text):
+    """Indexes sometimes run sentences together ("portfolio.Covariance"): restore the space."""
+    return re.sub(r'([a-z)\]%]{2})([.?!])([A-Z][a-z])', r'\1\2 \3', clean(text))
+
+
 def sentences(text):
-    text = clean(text)
+    text = respace(text)
     if not text:
         return []
     # Split on sentence ends, but not after common abbreviations or initials.
@@ -54,6 +59,7 @@ class Taxonomy:
         self.field_re = compile_(self.fields)
         self.method_re = compile_(self.methods)
         self.data_re = compile_(self.data_types)
+        self.method_group = {m['key']: m.get('group', '') for m in self.methods}
         self.jel_to_field = []
         for f in self.fields:
             for code in f.get('jel', []):
@@ -71,6 +77,26 @@ class Taxonomy:
 # Rules
 # ---------------------------------------------------------------------------
 AIM = re.compile(r'\b(?:we|this (?:paper|article|study|note))\b[^.?!]{0,60}?\b(?:stud(?:y|ies)|examine|investigate|ask|analy[sz]e|explore|quantif(?:y|ies)|estimate|test|evaluate|assess|measure|document|propose|develop)', re.I)
+CONTRIB = re.compile(r'\bcontribut|\b(?:we are|is) the first|\bfirst (?:to|paper|study|evidence|causal|systematic)|\bnovel\b|'
+                     r'\bnew (?:data|dataset|evidence|approach|method|measure|framework|estimator|insight)|'
+                     r'\b(?:this|our) (?:paper|article|study|analysis|work) (?:adds|extends|complements|advances|fills|offers|provides)|\bliterature\b', re.I)
+DESIGN_GROUPS = ('design', 'model')
+
+
+def trim_words(text, n):
+    words = clean(text).split()
+    return ' '.join(words[:n]) + (' …' if len(words) > n else '')
+
+
+def rule_extras(abstract, conclusion, tax, exclude=()):
+    """Contribution and identification sentences picked from the text, for rule-tagged papers."""
+    sents = sentences(abstract) + sentences(conclusion)
+    contrib = next((s for s in sents if CONTRIB.search(s) and s not in exclude), '') or next((s for s in sents if CONTRIB.search(s)), '')
+    design = [rx for key, rx in tax.method_re if tax.method_group.get(key) in DESIGN_GROUPS]
+    ident = next((s for s in sents if s != contrib and any(rx.search(s) for rx in design)), '')
+    return {'contribution': trim_words(contrib, 45), 'ident': trim_words(ident, 40)}
+
+
 FINDING = re.compile(r'\bwe (?:find|show|document|estimate|establish)|\bresults (?:show|suggest|indicate|reveal)|\b(?:finds?|shows?) that\b', re.I)
 YEARS = re.compile(r'\b(1[5-9]\d\d|20[0-2]\d)\s*(?:-|–|—|to|and)\s*(1[5-9]\d\d|20[0-2]\d)\b')
 PLACES = [
@@ -144,13 +170,15 @@ def rules(paper, abstract, conclusion, tax, keywords=(), tldr=''):
             topics.append(kw)
     geo = [name for name, rx in PLACES if rx.search(head)][:4]
     years = YEARS.search(head)
+    extras = rule_extras(abstract, conclusion, tax, exclude=summary)
     return {
         'q': question_from(title, abs_sents),
+        'contribution': extras['contribution'],
         'summary': summary_text,
         'conclusion': conc_text,
         'fields': fields,
         'methods': methods,
-        'ident': '',
+        'ident': extras['ident'],
         'data': data,
         'dataDetail': '',
         'topics': topics[:4],
@@ -169,13 +197,14 @@ def system_prompt(tax, vocabulary=()):
     methods = '\n'.join(f"- {m['key']}: {m['label']} [{groups.get(m['group'], m['group'])}]" for m in tax.methods)
     data = '\n'.join(f"- {d['key']}: {d['label']}" for d in tax.data_types)
     vocab = ', '.join(vocabulary) if vocabulary else '(none yet)'
-    return f"""You index new research papers for Literature Radar, a personal digest of the latest articles in top economics journals (plus a few political science, sociology and behavioural-science journals), kept by an economics researcher. For each paper you receive its metadata, its abstract and, when an open-access copy could be read, an excerpt of its conclusion section. Return one JSON object that summarises and classifies the paper. A researcher will skim these entries to decide what to read, and the tags feed a network of methods, fields, data and topics, so precision matters more than coverage.
+    return f"""You index new research papers for Literature Radar, a personal digest of the latest articles in top economics journals and NBER working papers (plus a few political science, sociology and behavioural-science journals), kept by an economics researcher. For each paper you receive its metadata, its abstract and, when an open-access copy could be read, an excerpt of its conclusion section. Return one JSON object that summarises and classifies the paper. A researcher will skim these entries to decide what to read, and the tags feed a network of methods, fields, data and topics, so precision matters more than coverage.
 
 Writing
 - question: the paper's research question as one direct question of at most 30 words, ending with "?". Name the setting or population when it matters.
+- contribution: what the paper adds to the literature, in 1-2 concise sentences of at most 35 words: the new evidence, setting, data, method or theory, and what it improves on. Start with a verb, for example "Provides the first causal estimate of ...".
 - summary: 2-3 sentences on what the paper does and what it finds, including headline magnitudes when the text gives them. Plain and precise; do not start with "This paper".
 - conclusion: 1-2 sentences on the conclusions and implications drawn in the conclusion excerpt. Without an excerpt, give the implication stated in the abstract, or "" if there is none.
-- identification: how causal effects or key parameters are identified, in at most 25 words (for example "Staggered DiD exploiting the county-level rollout of X, 1995-2010"). Use "" for pure theory or purely descriptive work.
+- identification: the identification strategy in at most 25 words: the design or estimator and the source of variation (for example "Staggered DiD exploiting the county-level rollout of X, 1995-2010"). For pure theory write "Theory: " and the type of model; for descriptive or measurement work write "Descriptive: " and what is measured.
 - data_detail: the main data sources, named concretely, in at most 20 words; "" if none.
 
 Classifying (use only the keys listed below)
@@ -207,7 +236,7 @@ def output_schema(tax):
     strings = {'type': 'array', 'items': {'type': 'string'}}
     enum = lambda keys: {'type': 'array', 'items': {'type': 'string', 'enum': list(keys)}}
     props = {
-        'question': text, 'summary': text, 'conclusion': text,
+        'question': text, 'contribution': text, 'summary': text, 'conclusion': text,
         'fields': enum(tax.field_keys), 'methods': enum(tax.method_keys),
         'identification': text, 'data_types': enum(tax.data_keys), 'data_detail': text,
         'topics': strings, 'geography': strings, 'period': text, 'jel': strings,
@@ -218,7 +247,7 @@ def output_schema(tax):
 def user_message(paper, journal, abstract, conclusion):
     authors = ', '.join(a['n'] + (f" ({a['inst']})" if a.get('inst') else '') for a in paper.get('authors', [])[:12])
     parts = [
-        f"Journal: {journal.get('name', paper.get('journal'))}",
+        f"{'Working paper series' if journal.get('kind') == 'working' else 'Journal'}: {journal.get('name', paper.get('journal'))}",
         f"Published: {paper.get('published') or 'unknown'}",
         f"Title: {paper.get('title')}",
         f"Authors: {authors or 'unknown'}",
@@ -267,6 +296,7 @@ def validate(raw, tax):
     question = clean(raw.get('question'), 320)
     return {
         'q': question,
+        'contribution': clean(raw.get('contribution'), 400),
         'summary': summary,
         'conclusion': clean(raw.get('conclusion'), 600),
         'fields': fields,

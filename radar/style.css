@@ -61,7 +61,7 @@ label.inline{display:inline-flex;align-items:center;gap:7px;font-size:12px;color
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px;background:var(--card)}.seg button{border:0;background:none;border-radius:7px;padding:6px 12px;font-size:12px;color:var(--text-secondary)}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .chip{display:inline-flex;align-items:center;gap:6px;border-radius:20px;padding:3px 9px;background:var(--line-soft);color:var(--text-secondary);font-size:11px;line-height:1.5;border:0;text-decoration:none;max-width:100%}
-.chip.btnish{cursor:pointer}.chip.btnish:hover{background:var(--accent-soft);color:var(--ink)}
+.chip.btnish{cursor:pointer}.chip.btnish:hover{background:var(--accent-soft);color:var(--ink)}.chip.btnish[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .chip .dot,.dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none}
 .chip.method::before{content:"";width:8px;height:8px;background:var(--kind-method);border-radius:1px;flex:none}
 .chip.data::before{content:"";width:8px;height:8px;background:var(--kind-data);transform:rotate(45deg);flex:none}
@@ -108,6 +108,8 @@ label.inline{display:inline-flex;align-items:center;gap:7px;font-size:12px;color
 .p-authors button.followed{color:var(--accent);font-weight:650}
 .p-question{font:italic 16px/1.5 Georgia,serif;color:var(--ink);margin:2px 0}.p-question.auto{font-style:normal;font-family:inherit;font-size:13.5px;color:var(--text-secondary)}
 .p-summary{font-size:13.5px;line-height:1.6;color:var(--text-secondary);margin:0}
+.p-line{font-size:13.5px;line-height:1.55;color:var(--ink);margin:0}.p-line b{display:inline-block;min-width:104px;margin-right:8px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}.p-line.auto{color:var(--text-secondary)}
+@media(max-width:760px){.p-line b{display:block;min-width:0;margin:0 0 1px}}
 .p-tags{display:flex;flex-wrap:wrap;gap:5px}
 .p-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:2px}
 .p-actions .icon-toggle{border:1px solid var(--line);background:transparent;border-radius:8px;min-height:30px;padding:3px 9px;font-size:11.5px;color:var(--text-secondary)}

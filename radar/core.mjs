@@ -35,7 +35,7 @@ export function normalizePaper(raw, ctx) {
     id: str(raw.id, 40), doi: str(raw.doi, 200), title: str(raw.title, 500), journal: str(raw.journal, 40),
     published: /^\d{4}-\d\d-\d\d$/.test(raw.published) ? raw.published : '', added: /^\d{4}-\d\d-\d\d$/.test(raw.added) ? raw.added : '1970-01-01',
     authors, abstract: unlabel(str(raw.abstract, 3000)), url: str(raw.url, 500), pdf: str(raw.pdf, 500), kind: str(raw.kind, 20) || 'article',
-    q: str(raw.q, 400), summary: unlabel(str(raw.summary, 1200)), conclusion: str(raw.conclusion, 800),
+    q: str(raw.q, 400), contribution: str(raw.contribution, 600), summary: unlabel(str(raw.summary, 1200)), conclusion: str(raw.conclusion, 800),
     fields: keys(raw.fields, ctx.fields, 3), methods: keys(raw.methods, ctx.methods, 4), data: keys(raw.data, ctx.data, 4),
     ident: str(raw.ident, 300), dataDetail: str(raw.dataDetail, 300),
     topics: [...new Set(arr(raw.topics).map(t => fold(t).trim()).filter(t => t.length > 1))].slice(0, 6),
@@ -88,27 +88,31 @@ export function authorIndex(papers) {
 export const mainField = author => ranked(author.fields, 1)[0]?.[0] || '';
 
 // ---- filters -------------------------------------------------------------------
-export const EMPTY_FILTERS = Object.freeze({ q: '', families: [], fields: [], methods: [], data: [], journals: [], authors: [], period: 'all', from: '', to: '', saved: false, unread: false, followed: false, modelOnly: false });
+export const EMPTY_FILTERS = Object.freeze({ q: '', families: [], fields: [], methods: [], data: [], journals: [], authors: [], period: 'all', from: '', to: '', run: '', saved: false, unread: false, followed: false, modelOnly: false });
 
 export function cleanFilters(raw) {
   const f = { ...EMPTY_FILTERS };
   if (!raw || typeof raw !== 'object') return f;
   for (const k of ['families', 'fields', 'methods', 'data', 'journals', 'authors']) f[k] = arr(raw[k]).map(x => str(x, 80)).filter(Boolean).slice(0, 40);
   f.q = str(raw.q, 200);
-  f.period = ['all', 'last-run', '7d', '30d', '90d', '180d', '365d', 'custom'].includes(raw.period) ? raw.period : 'all';
+  f.period = ['all', '7d', '30d', '90d', '180d', '365d', 'custom'].includes(raw.period) ? raw.period : 'all';
+  f.run = /^\d{4}-\d\d-\d\d$/.test(raw.run) ? raw.run : '';
   f.from = /^\d{4}-\d\d-\d\d$/.test(raw.from) ? raw.from : '';
   f.to = /^\d{4}-\d\d-\d\d$/.test(raw.to) ? raw.to : '';
   for (const k of ['saved', 'unread', 'followed', 'modelOnly']) f[k] = raw[k] === true;
   return f;
 }
 export const activeFilterCount = f => ['families', 'fields', 'methods', 'data', 'journals', 'authors'].reduce((n, k) => n + f[k].length, 0)
-  + (f.q ? 1 : 0) + (f.period !== 'all' ? 1 : 0) + ['saved', 'unread', 'followed', 'modelOnly'].filter(k => f[k]).length;
+  + (f.q ? 1 : 0) + (f.period !== 'all' ? 1 : 0) + (f.run ? 1 : 0) + ['saved', 'unread', 'followed', 'modelOnly'].filter(k => f[k]).length;
 
-/** [from, to] in date-added terms; to is inclusive. */
-export function addedWindow(f, { today, lastRun }) {
+/** The paper's own date: publication date, or the day it was added when the index has none. */
+export const paperDate = p => p.published || p.added;
+
+/** [from, to] on the paper's publication date; `to` is inclusive. Presets reach back from
+ * today and leave the end open, so articles already dated to a coming issue stay in. */
+export function dateWindow(f, { today }) {
   const back = { '7d': 7, '30d': 30, '90d': 90, '180d': 180, '365d': 365 }[f.period];
   if (back) return [addDays(today, -back + 1), ''];
-  if (f.period === 'last-run') return [lastRun || today, ''];
   if (f.period === 'custom') return [f.from, f.to];
   return ['', ''];
 }
@@ -116,19 +120,20 @@ export function addedWindow(f, { today, lastRun }) {
 const haystacks = new WeakMap();
 function haystack(p) {
   let h = haystacks.get(p);
-  if (!h) haystacks.set(p, h = fold([p.title, p.q, p.summary, p.conclusion, p.abstract, p.ident, p.dataDetail, p.topics.join(' '), p.geo.join(' '), p.period, p.authors.map(a => a.n + ' ' + a.inst).join(' '), p.jel.join(' ')].join(' • ')));
+  if (!h) haystacks.set(p, h = fold([p.title, p.q, p.contribution, p.summary, p.conclusion, p.abstract, p.ident, p.dataDetail, p.topics.join(' '), p.geo.join(' '), p.period, p.authors.map(a => a.n + ' ' + a.inst).join(' '), p.jel.join(' ')].join(' • ')));
   return h;
 }
 export const queryTerms = q => fold(q).split(/\s+/).map(t => t.replace(/^["'(]+|["')]+$/g, '')).filter(t => t.length > 1);
 
-export function filterPapers(papers, f, ctx, { user = {}, today = isoDay(Date.now()), lastRun = '' } = {}) {
-  const [from, to] = addedWindow(f, { today, lastRun });
+export function filterPapers(papers, f, ctx, { user = {}, today = isoDay(Date.now()) } = {}) {
+  const [from, to] = dateWindow(f, { today });
   const terms = queryTerms(f.q);
   const any = (list, chosen) => !chosen.length || list.some(x => chosen.includes(x));
   const followed = user.follow || {};
   return papers.filter(p => {
-    if (from && p.added < from) return false;
-    if (to && p.added > to) return false;
+    if (from && paperDate(p) < from) return false;
+    if (to && paperDate(p) > to) return false;
+    if (f.run && p.added !== f.run) return false; // "added in this update", from the update chips
     // A field and a whole family are both "field" choices: either one matching is enough.
     if ((f.fields.length || f.families.length) && !p.fields.some(k => f.fields.includes(k) || f.families.includes(ctx.familyOf(k)))) return false;
     if (!any(p.methods, f.methods) || !any(p.data, f.data)) return false;
@@ -387,8 +392,8 @@ export function toRis(p, ctx) {
 }
 const csvCell = v => { const s = str(v); return /[",\n;]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s; };
 export function toCsv(papers, ctx) {
-  const head = ['added', 'published', 'journal', 'title', 'authors', 'question', 'summary', 'fields', 'methods', 'identification', 'data', 'data_detail', 'topics', 'geography', 'period', 'doi', 'url', 'tagged_by'];
-  const rows = papers.map(p => [p.added, p.published, ctx.journals.get(p.journal)?.short || p.journal, p.title, p.authors.map(a => a.n).join('; '), p.q, p.summary,
+  const head = ['added', 'published', 'journal', 'title', 'authors', 'question', 'contribution', 'summary', 'fields', 'methods', 'identification', 'data', 'data_detail', 'topics', 'geography', 'period', 'doi', 'url', 'tagged_by'];
+  const rows = papers.map(p => [p.added, p.published, ctx.journals.get(p.journal)?.short || p.journal, p.title, p.authors.map(a => a.n).join('; '), p.q, p.contribution, p.summary,
     p.fields.map(k => ctx.label('field', k)).join('; '), p.methods.map(k => ctx.label('method', k)).join('; '), p.ident, p.data.map(k => ctx.label('data', k)).join('; '),
     p.dataDetail, p.topics.join('; '), p.geo.join('; '), p.period, p.doi, p.url, p.by]);
   return [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');

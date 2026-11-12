@@ -1,4 +1,4 @@
-const CACHE='literature-radar-v1',SHELL=['../shared/motion.css?v=1','../shared/motion.mjs?v=1','./','./index.html','./style.css?v=1','./app.mjs?v=1','./core.mjs?v=1','./graph.mjs?v=1','./vendor/d3.min.js','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png','./config.json'];
+const CACHE='literature-radar-v2',SHELL=['../shared/motion.css?v=1','../shared/motion.mjs?v=1','./','./index.html','./style.css?v=2','./app.mjs?v=2','./core.mjs?v=2','./graph.mjs?v=1','./vendor/d3.min.js','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png','./config.json'];
 // The paper files change twice a week: always try the network first, fall back to the last copy offline.
 const FRESH=/\/(data\/[^/]+\.json|config\.json)$/;
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
