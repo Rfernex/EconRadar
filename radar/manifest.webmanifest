@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Literature Radar",
-  "short_name": "Lit Radar",
+  "name": "EconRadar",
+  "short_name": "EconRadar",
   "description": "New papers from the top economics journals, summarised, tagged and mapped.",
   "start_url": "./#latest",
   "scope": "./",

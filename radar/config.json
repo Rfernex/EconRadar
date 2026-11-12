@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Shared by tools/collect_literature.py (what to fetch, how to tag) and the Literature Radar app (labels, colours, filters). Add a journal by appending to `journals` with its OpenAlex source id (https://api.openalex.org/sources/issn:XXXX-XXXX). A working-paper series takes kind \"working\" and, optionally, a pdfTemplate where {id} is the DOI suffix. Set `enabled` to false to stop collecting from it; papers already collected stay.",
+  "about": "Shared by tools/collect_literature.py (what to fetch, how to tag) and the EconRadar app (labels, colours, filters). Add a journal by appending to `journals` with its OpenAlex source id (https://api.openalex.org/sources/issn:XXXX-XXXX). A working-paper series takes kind \"working\" and, optionally, a pdfTemplate where {id} is the DOI suffix. Set `enabled` to false to stop collecting from it; papers already collected stay.",
   "lookbackDays": 60,
   "families": [
     {"key": "labour", "label": "Labour & human capital", "slot": 1},

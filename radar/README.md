@@ -1,4 +1,4 @@
-# Literature Radar
+# EconRadar
 
 New papers from the top economics journals and NBER working papers (and a few journals beyond economics), collected twice a week, summarised, tagged and mapped. Installable like the other apps; it works offline with the last papers it loaded.
 
@@ -32,7 +32,7 @@ New papers from the top economics journals and NBER working papers (and a few jo
 | `OPENALEX_API_KEY` | secret | Optional, free from openalex.org/settings/api. Without it the collector shares OpenAlex's small keyless daily budget with every GitHub runner on the same IP. |
 | `RADAR_MODEL` | variable | Claude model; default `claude-opus-5-5`. `claude-haiku-5-5` costs about 1/40th. |
 
-**Cost** with Claude Opus 5.5 at low effort: roughly 3–4 cents a paper, so about 60 papers a week ≈ $2/week. Re-summarising the ~1,400 seeded papers once ≈ $40–50 (Haiku 5.5: about $1). Start that catch-up from **Actions → Literature Radar → Run workflow** with “papers to re-summarise” = 1500. A run stops starting new summaries after 80 minutes (`--time-budget`) and saves what it has; the rest wait for the next run. A new Anthropic account has low rate limits, so expect to start it two or three times.
+**Cost** with Claude Opus 5.5 at low effort: roughly 3–4 cents a paper, so about 60 papers a week ≈ $2/week. Re-summarising the ~1,400 seeded papers once ≈ $40–50 (Haiku 5.5: about $1). Start that catch-up from **Actions → EconRadar → Run workflow** with “papers to re-summarise” = 1500. A run stops starting new summaries after 80 minutes (`--time-budget`) and saves what it has; the rest wait for the next run. A new Anthropic account has low rate limits, so expect to start it two or three times.
 
 ### Running it by hand
 
@@ -49,6 +49,21 @@ Needs Python 3.12; `pip install pypdf` for conclusions and `pip install anthropi
 ### Adding a journal or a field
 
 Append to `journals` in `config.json` with its OpenAlex source id (`https://api.openalex.org/sources/issn:XXXX-XXXX` returns it), a `group` (`general`, `field`, `beyond`) and default `fields`. Set `enabled: false` to pause one; its papers stay. Fields, methods and data types are also defined there (each with the regular expression the rules use); the model only ever chooses among them. Fields roll up into eight families, which take the eight colours of the network and charts.
+
+## Focus areas (personal)
+
+`radar/focus.json` defines literatures followed in depth, beyond the radar's journals: today *Basic income, cash transfers & wealth taxation*, every paper since January 2015 in any journal, working-paper series or book that OpenAlex indexes (about 7,500 papers, with the citations between them). The **Focus** tab shows it: what is new, the most cited papers within the literature, papers per year by strand, which outcomes each strand studies, a citation map that grows year by year, the authors, and for each paper what it builds on, who cites it and which papers share its references. By default it hides unindexed venues (switch on *All venues* to see everything).
+
+The tab appears only on devices where it was switched on: open `…/radar/#focus` once in that browser (*Hide it on this device* at the bottom of the tab undoes it). Nothing else links to it, but the data files are public like the rest of the site, so this keeps it out of view without making it private.
+
+`tools/collect_focus.py` runs after the radar's collector. Each strand is a set of OpenAlex searches (quoted phrases in titles, or titles and abstracts) confirmed by a regular expression; an optional `exclude` pattern drops other senses of a phrase. A strand is read in full once, then each run asks for the last 120 days, and every 30 days a full pass refreshes citation counts. Duplicate records (a working paper and its journal version, a preprint posted twice) are merged into the journal version. Editing a pattern re-tags the stored papers on the next run, and papers that no longer match a title-only strand leave. Searches cost ten ordinary OpenAlex requests: without `OPENALEX_API_KEY` a run makes at most 30 (about 100 a day are shared by everyone on the runner's IP), with a key 60. With `ANTHROPIC_API_KEY`, Claude summarises up to 40 focus papers a run, newest first; free OpenRouter models are kept for the radar's own new papers.
+
+Files: `data/focus-<area>.json` (papers, loaded first), `data/focus-<area>-abstracts.json` (loaded in the background), `data/focus-<area>-refs.json` (every paper's references, for the collector only).
+
+```
+python3 tools/collect_focus.py                 # update every area
+python3 tools/collect_focus.py --budget 60     # more searches (with an OpenAlex key)
+```
 
 ## Personal data
 

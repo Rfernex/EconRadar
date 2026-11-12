@@ -20,8 +20,15 @@ const ICONS = {
   authors: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.4 3-5.2 5.5-5.2s4.7 1.8 5.5 5.2"/><circle cx="17" cy="9" r="2.4"/><path d="M15.6 13.9c2.4-.3 4.2 1.2 4.9 4.1"/>',
   trends: '<path d="M4 19V5M4 19h16"/><path d="M7 15l4-4 3 3 5-6"/>',
   sources: '<path d="M5 5.5C5 4.7 5.7 4 6.5 4H18v14H6.5C5.7 18 5 18.7 5 19.5zM5 19.5c0 .8.7 1.5 1.5 1.5H18"/><path d="M9 8h6M9 11h4"/>',
+  focus: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
 };
-const VIEWS = [['latest', 'Latest'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['sources', 'Sources']];
+const BASE_VIEWS = [['latest', 'Latest'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['sources', 'Sources']];
+// The Focus tab (radar/focus.json) is personal: it shows only on devices where it was switched
+// on, by opening the app once at #focus. Nothing else in the app links to it.
+const FOCUS_KEY = 'radar.focus.v1';
+const focusOn = () => local.get(FOCUS_KEY, false) === true;
+const views = () => (focusOn() ? [...BASE_VIEWS.slice(0, 4), ['focus', 'Focus'], BASE_VIEWS[4]] : BASE_VIEWS);
+let focusModule = null;
 
 const S = {
   ctx: null, config: null, index: { shards: [], runs: [] }, papers: [], visible: [], firsts: new Map(), allAuthors: new Map(),
@@ -73,12 +80,15 @@ async function load() {
   saveUser();
 }
 
+function topCount() {
+  const n = S.visible.length;
+  $('#top-count').textContent = n === S.papers.length ? plural(n, 'paper') : `${fmt(n)} of ${plural(S.papers.length, 'paper')}`;
+}
 function refresh({ keepNetwork = false } = {}) {
   S.visible = C.filterPapers(S.papers, S.filters, S.ctx, { user: S.user, today: S.today });
   S.limit = 30;
   updateFilterUI();
-  const n = S.visible.length;
-  $('#top-count').textContent = n === S.papers.length ? plural(n, 'paper') : `${fmt(n)} of ${plural(S.papers.length, 'paper')}`;
+  topCount();
   render(keepNetwork || S.view === 'network');
 }
 
@@ -183,16 +193,18 @@ function bindFilters() {
 
 // ---- routing ------------------------------------------------------------------------
 function renderNav() {
-  $('#nav').innerHTML = VIEWS.map(([k, l]) => `<a class="nav-link" href="#${k}" data-view="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k]}</svg><span>${l}</span></a>`).join('');
+  $('#nav').innerHTML = views().map(([k, l]) => `<a class="nav-link" href="#${k}" data-view="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k]}</svg><span>${l}</span></a>`).join('');
 }
 function route() {
   const [view, ...rest] = location.hash.slice(1).split('/');
-  S.view = VIEWS.some(([k]) => k === view) || view === 'author' ? view : 'latest';
+  if (view === 'focus' && !focusOn()) { local.set(FOCUS_KEY, true); renderNav(); }
+  S.view = views().some(([k]) => k === view) || view === 'author' ? view : 'latest';
   S.arg = decodeURIComponent(rest.join('/'));
   if (S.view !== 'network' && S.network) { S.network.destroy(); S.network = null; stopPlay(); }
+  if (S.view !== 'focus') { focusModule?.leave(); topCount(); }
   for (const a of $$('.nav-link')) a.classList.toggle('active', a.dataset.view === (S.view === 'author' ? 'authors' : S.view));
-  $('#crumb').textContent = { latest: 'LATEST PAPERS', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', sources: 'SOURCES & SETTINGS' }[S.view];
-  $('#filter-bar').hidden = S.view === 'sources';
+  $('#crumb').textContent = { latest: 'LATEST PAPERS', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
+  $('#filter-bar').hidden = $('#filter-toggle').hidden = S.view === 'sources' || S.view === 'focus';
   render();
   $('#main').focus({ preventScroll: true });
   window.scrollTo(0, 0);
@@ -200,6 +212,7 @@ function route() {
 function render(keepNetwork = false) {
   hideTip();
   const main = $('#main');
+  if (S.view === 'focus') return renderFocus();
   if (!S.papers.length && S.view !== 'sources') { main.innerHTML = emptyRadar(); return; }
   if (S.view === 'latest') main.innerHTML = latestHtml();
   else if (S.view === 'network') renderNetwork(keepNetwork);
@@ -207,6 +220,12 @@ function render(keepNetwork = false) {
   else if (S.view === 'author') main.innerHTML = authorHtml(S.arg);
   else if (S.view === 'trends') main.innerHTML = trendsHtml();
   else if (S.view === 'sources') main.innerHTML = sourcesHtml();
+}
+async function renderFocus() {
+  try { focusModule ||= await import('./focus.mjs?v=1'); }
+  catch (e) { $('#main').innerHTML = `<div class="empty"><h2>The Focus tab could not load</h2><p>${esc(e.message)}</p></div>`; return; }
+  if (S.view !== 'focus') return;
+  focusModule.show($('#main'), { S, C, $, $$, esc, fmt, pct, plural, dayLabel, toast, download, showTip, hideTip, getJSON, local, renderNav, createNetwork });
 }
 const emptyRadar = () => `<div class="empty"><h2>The radar is empty</h2><p>No papers have been collected yet. The collector runs every Tuesday and Friday; you can also start it by hand (see Sources).</p><a class="btn" href="#sources">Sources & setup</a></div>`;
 
@@ -283,7 +302,7 @@ function latestHtml() {
     body += paperCard(p);
   }
   if (S.prefs.sort === 'added' && body) body += '</div>'; else body = `<div class="papers">${body}</div>`;
-  return `<div class="heading"><div><span class="eyebrow">${S.lastRun ? 'Updated ' + dayLabel(S.lastRun) : 'Literature Radar'}</span><h1>Latest papers</h1>
+  return `<div class="heading"><div><span class="eyebrow">${S.lastRun ? 'Updated ' + dayLabel(S.lastRun) : 'EconRadar'}</span><h1>Latest papers</h1>
       <p>New articles from ${S.config.journals.filter(j => j.enabled !== false && j.kind !== 'working').length} journals${S.config.journals.some(j => j.enabled !== false && j.kind === 'working') ? ' and ' + S.config.journals.filter(j => j.enabled !== false && j.kind === 'working').map(j => j.short.replace(/ WP$/, '')).join(', ') + ' working papers' : ''}, each with its research question, a summary, and tags for field, method and data. Click any tag to filter by it.</p></div>
       <div class="toolbar"><select id="sort" aria-label="Sort papers">${[['added', 'Date added'], ['published', 'Publication date'], ['journal', 'Journal']].map(([v, l]) => `<option value="${v}" ${S.prefs.sort === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="export" aria-label="Export these papers"><option value="">Export…</option><option value="bib">BibTeX</option><option value="ris">RIS (Zotero)</option><option value="csv">CSV</option></select></div></div>
@@ -299,9 +318,9 @@ function latestHtml() {
 function exportPapers(kind, list = sortPapers(S.visible)) {
   if (!list.length) return toast('Nothing to export.');
   const stamp = S.today;
-  if (kind === 'bib') download(`literature-radar-${stamp}.bib`, list.map(p => C.toBibtex(p, S.ctx)).join('\n\n'), 'application/x-bibtex');
-  if (kind === 'ris') download(`literature-radar-${stamp}.ris`, list.map(p => C.toRis(p, S.ctx)).join('\r\n'), 'application/x-research-info-systems');
-  if (kind === 'csv') download(`literature-radar-${stamp}.csv`, '﻿' + C.toCsv(list, S.ctx), 'text/csv');
+  if (kind === 'bib') download(`econradar-${stamp}.bib`, list.map(p => C.toBibtex(p, S.ctx)).join('\n\n'), 'application/x-bibtex');
+  if (kind === 'ris') download(`econradar-${stamp}.ris`, list.map(p => C.toRis(p, S.ctx)).join('\r\n'), 'application/x-research-info-systems');
+  if (kind === 'csv') download(`econradar-${stamp}.csv`, '﻿' + C.toCsv(list, S.ctx), 'text/csv');
   toast(`Exported ${plural(list.length, 'paper')}.`);
 }
 
@@ -373,7 +392,7 @@ function onMainClick(e) {
   else if (act === 'in-network') { $('#dialog').close(); S.prefs.lens = 'papers'; savePrefs(); S.net.pending = id; location.hash = 'network'; if (S.view === 'network') renderNetwork(); }
   else if (act === 'follow') { const k = t.dataset.key, on = !S.user.follow[k]; if (on) S.user.follow[k] = S.today; else delete S.user.follow[k]; saveUser(); t.setAttribute('aria-pressed', String(on)); t.textContent = on ? '★ Following' : '☆ Follow'; toast(on ? 'Following — their new papers are marked in Latest.' : 'Unfollowed.'); }
   else if (act === 'author-sort') { S.prefs.authorSort = t.dataset.value; savePrefs(); $('#main').innerHTML = authorsHtml(); }
-  else if (act === 'export-user') download(`literature-radar-personal-${S.today}.json`, JSON.stringify(S.user, null, 1), 'application/json');
+  else if (act === 'export-user') download(`econradar-personal-${S.today}.json`, JSON.stringify(S.user, null, 1), 'application/json');
   else if (act === 'import-user') $('#import-file')?.click();
   else if (act === 'export-all') exportPapers(t.dataset.kind, sortPapers(S.papers));
 }
@@ -729,7 +748,7 @@ function sourcesHtml() {
         <ol><li>On GitHub: repository <b>Settings → Secrets and variables → Actions → New repository secret</b>.</li>
         <li>Name it <code>ANTHROPIC_API_KEY</code> (Claude, recommended) or <code>OPENROUTER_API_KEY</code> (free models, slower and rate-limited). Paste the key there, never in the app or in chat.</li>
         <li>Optional: a variable <code>RADAR_MODEL</code> picks the Claude model (default <code>claude-opus-5-5</code>; <code>claude-haiku-5-5</code> costs about 1/40th), and a free <code>OPENALEX_API_KEY</code> secret avoids OpenAlex's shared daily budget.</li>
-        <li>To catch up on old papers at once: <b>Actions → Literature Radar → Run workflow</b>, with “papers to re-summarise” set to e.g. 1500 to redo them all.</li></ol></div></div>
+        <li>To catch up on old papers at once: <b>Actions → EconRadar → Run workflow</b>, with “papers to re-summarise” set to e.g. 1500 to redo them all.</li></ol></div></div>
     <div class="section-head"><h2>Journals & working papers</h2><p>Edit <code>radar/config.json</code> to add or pause one</p></div>
     <div class="panel table-scroll"><table class="data"><thead><tr><th>Source</th><th class="num">Papers</th><th>Last added</th><th>Status</th></tr></thead><tbody>${journals}</tbody></table></div>
     <div class="section-head"><h2>Update log</h2></div>
@@ -776,7 +795,7 @@ async function importUser(file) {
     const data = C.cleanUser(JSON.parse(await file.text()));
     if (!confirm(`Replace this device's saved papers, notes and followed authors with the backup (${Object.keys(data.saved).length} saved, ${Object.keys(data.notes).length} notes)?`)) return;
     data.lastVisit = S.user.lastVisit; S.user = data; saveUser(); toast('Backup restored.'); render();
-  } catch { toast('That file is not a Literature Radar backup.'); }
+  } catch { toast('That file is not an EconRadar backup.'); }
 }
 
 function sideStatus() {
@@ -795,7 +814,6 @@ async function start() {
   if (!S.config.journals) return;
   S.visible = C.filterPapers(S.papers, S.filters, S.ctx, { user: S.user, today: S.today });
   updateFilterUI();
-  $('#top-count').textContent = S.visible.length === S.papers.length ? plural(S.papers.length, 'paper') : `${fmt(S.visible.length)} of ${plural(S.papers.length, 'paper')}`;
   route();
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => render(S.view === 'network'));
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

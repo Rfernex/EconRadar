@@ -1,4 +1,4 @@
-"""Summaries and tags for Literature Radar papers.
+"""Summaries and tags for EconRadar papers.
 
 Three ways to enrich a paper, chosen by which secret the collector finds:
 
@@ -197,7 +197,7 @@ def system_prompt(tax, vocabulary=()):
     methods = '\n'.join(f"- {m['key']}: {m['label']} [{groups.get(m['group'], m['group'])}]" for m in tax.methods)
     data = '\n'.join(f"- {d['key']}: {d['label']}" for d in tax.data_types)
     vocab = ', '.join(vocabulary) if vocabulary else '(none yet)'
-    return f"""You index new research papers for Literature Radar, a personal digest of the latest articles in top economics journals and NBER working papers (plus a few political science, sociology and behavioural-science journals), kept by an economics researcher. For each paper you receive its metadata, its abstract and, when an open-access copy could be read, an excerpt of its conclusion section. Return one JSON object that summarises and classifies the paper. A researcher will skim these entries to decide what to read, and the tags feed a network of methods, fields, data and topics, so precision matters more than coverage.
+    return f"""You index new research papers for EconRadar, a personal digest of the latest articles in top economics journals and NBER working papers (plus a few political science, sociology and behavioural-science journals), kept by an economics researcher. For each paper you receive its metadata, its abstract and, when an open-access copy could be read, an excerpt of its conclusion section. Return one JSON object that summarises and classifies the paper. A researcher will skim these entries to decide what to read, and the tags feed a network of methods, fields, data and topics, so precision matters more than coverage.
 
 Writing
 - question: the paper's research question as one direct question of at most 30 words, ending with "?". Name the setting or population when it matters.
@@ -266,8 +266,17 @@ class EnrichError(Exception):
 JUNK = re.compile(r'^(?:placeholder|n/?a|none|null|nil|tbd|todo|unknown|string|text|not (?:available|applicable|stated|provided|reported)|\.{2,}|-+|…|lorem ipsum.*)\.?$', re.I)
 
 
+# ...or opens with a remark about its input ("Abstract unavailable: ...", "Based on the title alone, ...").
+_MISSING = r'(?:the )?(?:abstract|full text|text|conclusion)\s+(?:is\s+)?(?:unavailable|not available|not provided|missing)'
+REMARK = re.compile(rf'^\s*(?:\({_MISSING}\)\s*[:.;,\-–—]?\s*|{_MISSING}\s*[:.;,\-–—]\s*'
+                    r'|based (?:only |solely )?on the title(?: alone)?,?\s*)', re.I)
+
+
 def answer(value, limit):
     text = clean(value, limit)
+    stripped = REMARK.sub('', text)
+    if stripped != text and stripped:
+        text = stripped[0].upper() + stripped[1:]
     return '' if JUNK.match(text) else text
 
 
@@ -452,7 +461,7 @@ class OpenRouterEnricher:
 
     def _live_models(self):
         try:
-            req = urllib.request.Request(self.MODELS_URL, headers={'User-Agent': 'LiteratureRadar/1.0'})
+            req = urllib.request.Request(self.MODELS_URL, headers={'User-Agent': 'EconRadar/1.0'})
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.load(r).get('data') or []
         except Exception:
@@ -514,7 +523,7 @@ class OpenRouterEnricher:
             self._pace()
             req = urllib.request.Request(self.URL, data=self._body(model, message), headers={
                 'Authorization': f'Bearer {self.key}', 'Content-Type': 'application/json',
-                'X-Title': 'Literature Radar'})
+                'X-Title': 'EconRadar'})
             content, finish = '', ''
             try:
                 with urllib.request.urlopen(req, timeout=120) as r:

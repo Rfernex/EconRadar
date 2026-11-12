@@ -410,6 +410,8 @@ class OpenRouter(unittest.TestCase):
         self.assertIn('nemotron-3.5-super-vl:free 1 ok/0 rejected', provider.report())
         with self.assertRaises(enrich.EnrichError):
             enrich.validate(dict(self.GOOD, summary='placeholder'), TAX)
+        for remark in ('Abstract unavailable: the paper studies x.', '(Abstract not available) The paper studies x.', 'Based on the title alone, the paper studies x.'):
+            self.assertEqual(enrich.answer(remark, 200), 'The paper studies x.', remark)
 
     def test_daily_limit_stops_the_provider(self):
         per_day = {'error': {'code': 429, 'message': 'Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day'}}

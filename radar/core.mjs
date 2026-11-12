@@ -1,4 +1,4 @@
-// Literature Radar: pure data logic, no DOM and no storage. Loading and checking the
+// EconRadar: pure data logic, no DOM and no storage. Loading and checking the
 // collected papers, filters, the author index, "firsts" (the first time a method,
 // data source or topic appears in a field), the three network lenses, trends and
 // citation exports. app.mjs draws; this file decides.

@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "about": "Personal focus areas: a whole literature (any journal, working paper or chapter) followed since a start date, with citation links between its papers. Collected by tools/collect_focus.py from OpenAlex searches; shown in the app's Focus tab only on devices where it was switched on (open the app once with #focus). Each strand lists OpenAlex searches ('in': 'title' or 'title_and_abstract'; quoted phrases, OR) and a regular expression ('match') that confirms a hit and also pulls matching papers from the main radar into the Focus tab. An optional 'exclude' pattern drops a strand's hits that use the words in another sense. Strands are fetched in the order listed.",
+  "areas": [
+    {
+      "key": "basic-income",
+      "title": "Basic income, cash transfers & wealth taxation",
+      "short": "Basic income & wealth tax",
+      "since": "2015-01-01",
+      "strands": [
+        {
+          "key": "uct",
+          "label": "Unconditional cash transfers",
+          "color": 1,
+          "queries": [
+            {
+              "in": "title_and_abstract",
+              "q": "\"unconditional cash transfer\" OR \"unconditional cash transfers\" OR \"unconditional transfer\" OR \"unconditional transfers\" OR GiveDirectly"
+            }
+          ],
+          "match": "\\bunconditional (?:cash )?transfers?\\b|\\bgive ?directly\\b"
+        },
+        {
+          "key": "ubi",
+          "label": "Universal basic income",
+          "color": 2,
+          "queries": [
+            {
+              "in": "title_and_abstract",
+              "q": "\"universal basic income\" OR \"unconditional basic income\" OR \"basic income experiment\" OR \"basic income pilot\" OR \"basic income guarantee\""
+            },
+            {
+              "in": "title",
+              "q": "\"basic income\" OR \"citizen's income\" OR \"citizens' income\" OR \"participation income\""
+            }
+          ],
+          "match": "\\b(?:universal |unconditional |guaranteed )?basic incomes?\\b|\\bUBI\\b|\\bcitizens?['’]? income\\b|\\bparticipation income\\b"
+        },
+        {
+          "key": "guaranteed",
+          "label": "Guaranteed income & negative income tax",
+          "color": 3,
+          "queries": [
+            {
+              "in": "title_and_abstract",
+              "q": "\"guaranteed income\" OR \"guaranteed basic income\" OR \"negative income tax\" OR \"guaranteed minimum income\""
+            }
+          ],
+          "match": "\\bguaranteed (?:basic |minimum )?income\\b|\\bnegative income tax",
+          "exclude": "\\bbancassurance\\b|\\blife insurance\\b|\\binsurance (?:polic|product|plan)|\\bannuit|\\bpolicyholders?\\b"
+        },
+        {
+          "key": "dividend",
+          "label": "Resource & carbon dividends",
+          "color": 4,
+          "queries": [
+            {
+              "in": "title_and_abstract",
+              "q": "\"permanent fund dividend\" OR \"social dividend\" OR \"carbon dividend\" OR \"carbon dividends\" OR \"universal dividend\" OR \"citizen dividend\""
+            }
+          ],
+          "match": "\\bpermanent fund dividend|\\b(?:social|carbon|universal|citizens?) dividends?\\b"
+        },
+        {
+          "key": "wealth-tax",
+          "label": "Wealth taxation",
+          "color": 5,
+          "queries": [
+            {
+              "in": "title_and_abstract",
+              "q": "\"wealth tax\" OR \"wealth taxes\" OR \"wealth taxation\" OR \"taxing wealth\" OR \"net wealth tax\" OR \"tax on wealth\" OR \"taxes on wealth\" OR \"billionaire tax\""
+            }
+          ],
+          "match": "\\bwealth tax(?:es|ation)?\\b|\\btax(?:es|ing)? (?:on )?(?:the )?(?:net )?wealth\\b|\\bbillionaire tax"
+        },
+        {
+          "key": "inheritance",
+          "label": "Inheritance & estate taxation",
+          "color": 6,
+          "queries": [
+            {
+              "in": "title_and_abstract",
+              "q": "\"inheritance tax\" OR \"inheritance taxes\" OR \"inheritance taxation\" OR \"estate tax\" OR \"estate taxes\" OR \"estate taxation\" OR \"bequest tax\" OR \"bequest taxation\""
+            }
+          ],
+          "match": "\\b(?:inheritance|estate|bequest|gift) tax(?:es|ation)?\\b|\\btaxation of (?:inheritances?|bequests?|estates?)\\b"
+        },
+        {
+          "key": "capital-tax",
+          "label": "Capital taxation & top wealth",
+          "color": 7,
+          "queries": [
+            {
+              "in": "title",
+              "q": "\"capital taxation\" OR \"taxation of capital\" OR \"capital income tax\" OR \"capital income taxation\" OR \"capital gains tax\" OR \"capital gains taxation\" OR \"top wealth\" OR \"wealth concentration\""
+            }
+          ],
+          "match": "\\bcapital (?:income |gains )?tax(?:es|ation)?\\b|\\btaxation of capital\\b|\\btop wealth\\b|\\bwealth concentration\\b"
+        },
+        {
+          "key": "child",
+          "label": "Child allowances & benefits",
+          "color": 8,
+          "queries": [
+            {
+              "in": "title",
+              "q": "\"child allowance\" OR \"child allowances\" OR \"child tax credit\" OR \"child benefit\" OR \"child benefits\" OR \"baby bonus\""
+            }
+          ],
+          "match": "\\bchild (?:allowances?|tax credits?|benefits?)\\b|\\bbaby bonus"
+        },
+        {
+          "key": "cash",
+          "label": "Cash transfers (conditional & other)",
+          "color": 0,
+          "queries": [
+            {
+              "in": "title",
+              "q": "\"cash transfer\" OR \"cash transfers\""
+            }
+          ],
+          "match": "\\bcash transfers?\\b"
+        }
+      ],
+      "outcomes": [
+        {
+          "key": "labour",
+          "label": "Labour supply & employment",
+          "match": "\\blabou?r (?:supply|market|force)|\\bemployment\\b|\\bwork(?:ing)? hours\\b|\\bwork incentives?\\b|\\bjob search\\b|\\bunemploy"
+        },
+        {
+          "key": "poverty",
+          "label": "Consumption, poverty & food security",
+          "match": "\\bconsumption\\b|\\bpoverty\\b|\\bfood (?:security|insecurity)\\b|\\bnutrition\\b|\\bexpenditures?\\b"
+        },
+        {
+          "key": "health",
+          "label": "Health & mental health",
+          "match": "\\bhealth\\b|\\bmental\\b|\\bdepress|\\bmortality\\b|\\bstress\\b|\\bwell-?being\\b"
+        },
+        {
+          "key": "children",
+          "label": "Children & education",
+          "match": "\\bschool|\\beducation(?:al)?\\b|\\bchild development\\b|\\bcognitive\\b|\\bbirth ?weight\\b"
+        },
+        {
+          "key": "investment",
+          "label": "Entrepreneurship, assets & savings",
+          "match": "\\bentrepreneur|\\bself-employ|\\bbusiness(?:es)?\\b|\\bassets?\\b|\\bsavings?\\b|\\blivestock\\b|\\binvestment"
+        },
+        {
+          "key": "local",
+          "label": "Local economy, prices & spillovers",
+          "match": "\\bspillovers?\\b|\\bgeneral equilibrium\\b|\\bmultiplier\\b|\\blocal (?:economy|prices|markets?)\\b|\\binflation\\b|\\bnon-?recipients?\\b"
+        },
+        {
+          "key": "gender",
+          "label": "Gender, intra-household & violence",
+          "match": "\\bwomen\\b|\\bgender\\b|\\bintimate partner\\b|\\bdomestic violence\\b|\\bbargaining\\b|\\bintra-?household\\b|\\bempowerment\\b"
+        },
+        {
+          "key": "family",
+          "label": "Fertility, marriage & family",
+          "match": "\\bfertility\\b|\\bmarriage\\b|\\bfamil(?:y|ies) (?:formation|structure)\\b|\\bchildbearing\\b"
+        },
+        {
+          "key": "attitudes",
+          "label": "Public support & politics",
+          "match": "\\bpublic (?:support|opinion)\\b|\\battitudes?\\b|\\bpreferences for (?:redistribution|taxation)\\b|\\bvot(?:e|ers|ing)\\b|\\bpolitical (?:support|economy|feasibility)\\b|\\bpopulis"
+        },
+        {
+          "key": "responses",
+          "label": "Tax avoidance, evasion & migration",
+          "match": "\\bavoidance\\b|\\bevasion\\b|\\boffshore\\b|\\btax havens?\\b|\\bmigration of (?:the )?(?:rich|wealthy)\\b|\\bmobility of (?:the )?(?:rich|wealthy|taxpayers)\\b|\\belasticit(?:y|ies) of (?:taxable )?wealth\\b|\\bbehaviou?ral responses?\\b"
+        },
+        {
+          "key": "inequality",
+          "label": "Inequality & redistribution",
+          "match": "\\binequalit|\\bredistribut|\\btop (?:income|wealth) shares?\\b|\\bwealth (?:distribution|concentration)\\b"
+        },
+        {
+          "key": "revenue",
+          "label": "Revenue, design & fiscal cost",
+          "match": "\\brevenues?\\b|\\bfiscal (?:cost|impact|space)\\b|\\bfinanc(?:ing|ed) (?:by|through)\\b|\\bbudget(?:ary)?\\b|\\boptimal tax"
+        },
+        {
+          "key": "automation",
+          "label": "Automation, AI & the future of work",
+          "match": "\\bautomation\\b|\\bartificial intelligence\\b|\\b(?:AI|robots?)\\b|\\bfuture of work\\b|\\btechnological unemployment\\b"
+        },
+        {
+          "key": "housing",
+          "label": "Housing & homelessness",
+          "match": "\\bhousing\\b|\\bhomeless|\\brent(?:s|al)?\\b"
+        },
+        {
+          "key": "climate",
+          "label": "Climate & carbon pricing",
+          "match": "\\bcarbon (?:tax|pric|dividend)|\\bclimate\\b|\\bemissions?\\b"
+        }
+      ]
+    }
+  ]
+}

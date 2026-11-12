@@ -1,4 +1,4 @@
-"""Draw the Literature Radar icon: radar rings and a sweep over a small network.
+"""Draw the EconRadar icon: radar rings and a sweep over a small network.
 
 Run from the repository root: python3 tools/render_radar_icon.py
 Writes radar/icon.svg (the editable source) and the 180/192/512 PNGs. Needs Pillow.
@@ -20,7 +20,7 @@ LINKS = [(0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (2, 5), (2, 3), (1, 4)]
 
 def svg():
     cx, cy = CENTER
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {S} {S}" role="img" aria-label="Literature Radar">',
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {S} {S}" role="img" aria-label="EconRadar">',
              f'<rect width="{S}" height="{S}" rx="112" fill="{BG}"/>']
     a0, a1, r = math.radians(-100), math.radians(-25), 230
     x0, y0 = cx + r * math.cos(a0), cy + r * math.sin(a0)

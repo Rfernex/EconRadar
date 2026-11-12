@@ -1,4 +1,4 @@
-"""Literature Radar collector: new articles from the journals in radar/config.json.
+"""EconRadar collector: new articles from the journals in radar/config.json.
 
 Runs twice a week from .github/workflows/literature-radar.yml (Tuesday and Friday)
 and by hand from the repository root:
@@ -46,7 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / 'radar'
 DATA = APP / 'data'
 CONFIG = APP / 'config.json'
-UA = 'LiteratureRadar/1.0 (scholarly digest; python-urllib)'
+UA = 'EconRadar/1.0 (scholarly digest; python-urllib)'
 OPENALEX = 'https://api.openalex.org/works'
 SELECT = ('id,doi,title,publication_date,type,primary_location,locations,best_oa_location,'
           'authorships,abstract_inverted_index,biblio,keywords,primary_topic')
