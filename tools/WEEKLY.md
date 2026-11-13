@@ -61,6 +61,16 @@ python3 tools/newsletter.py send      # creates a DRAFT in Buttondown; you revie
 
 If `send` says BUTTONDOWN_API_KEY is not set, skip it: the issue is still in the app.
 
+## 3b. Readers' flags (report only)
+
+```
+python3 tools/radar_flags.py list
+```
+
+For each open flag, write in your report: the flag id, the paper, the reader's note, and whether the note
+is right according to the abstract, with the correction you would make. **Change nothing**: the
+maintainer decides each flag later. If `ECONRADAR_FLAGS_CSV` is not set, skip this step.
+
 ## 4. Publish
 
 ```
@@ -75,7 +85,7 @@ Stage `radar/data` only, never other files. If tests fail, do not push: report t
 ## 5. Report
 
 One short message: papers added (journals / NBER), summaries written and rejected, backlog
-left (`status`), newsletter draft created or skipped, and anything that failed.
+left (`status`), newsletter draft created or skipped, open readers' flags (step 3b), and anything that failed.
 
 ## Catch-up (the backlog, on request)
 

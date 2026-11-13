@@ -1,4 +1,4 @@
-import * as C from './core.mjs?v=4';
+import * as C from './core.mjs?v=5';
 import { createNetwork } from './graph.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
@@ -323,7 +323,7 @@ function newsletterHtml(issue) {
 }
 
 async function renderFocus() {
-  try { focusModule ||= await import('./focus.mjs?v=3'); }
+  try { focusModule ||= await import('./focus.mjs?v=4'); }
   catch (e) { $('#main').innerHTML = `<div class="empty"><h2>The Focus tab could not load</h2><p>${esc(e.message)}</p></div>`; return; }
   if (S.view !== 'focus') return;
   focusModule.show($('#main'), { S, C, $, $$, esc, fmt, pct, plural, dayLabel, toast, download, showTip, hideTip, getJSON, local, renderNav, createNetwork });
@@ -455,7 +455,7 @@ function openPaper(id) {
       ${row('Data', esc([p.dataDetail, p.data.map(k => S.ctx.label('data', k)).join(', ')].filter(Boolean).join(' — ')))}
       ${row('Setting', esc([p.geo.join(', '), p.period].filter(Boolean).join(' · ')))}${row('Fields', p.fields.map(k => fieldDot(k) + ' ' + esc(S.ctx.label('field', k))).join(', '))}
       ${row('Methods', esc(p.methods.map(k => S.ctx.label('method', k)).join(', ')))}${row('Topics', esc(p.topics.join(', ')))}${row('JEL', esc(p.jel.join(', ')))}
-      ${row('Added to radar', dayLabel(p.added))}${row('Summary from', esc((C.byModel(p) ? p.by : 'automatic extraction (no model yet)') + (p.text.length ? ` · based on the ${p.text.join(' and ')}` : ' · title only')))}
+      ${row('Added to radar', dayLabel(p.added))}${row('Summary from', esc((C.byModel(p) ? p.by : 'automatic extraction (no model yet)') + (p.text.length ? ` · based on the ${p.text.join(' and ')}` : ' · title only') + (p.corrected ? ` · corrected ${dayLabel(p.corrected)} after a reader's flag` : '')))}
       ${row('Institutions', esc([...new Set(p.authors.map(a => a.inst).filter(Boolean))].join('; ')))}
     </dl>
     ${firsts ? `<div class="chips" style="margin-bottom:12px">${firsts}</div>` : ''}
@@ -463,6 +463,7 @@ function openPaper(id) {
     <div class="p-actions" style="margin:14px 0" data-id="${esc(p.id)}"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
       <a class="btn small" href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>${p.pdf ? `<a class="btn ghost small" href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}
       <button type="button" class="btn ghost small" data-act="cite">Copy BibTeX</button><button type="button" class="btn ghost small" data-act="in-network">Show in network</button></div>
+    ${(flag => flag ? `<p class="small muted flag-line">Something inaccurate in this summary? <a href="${esc(flag)}" target="_blank" rel="noopener">Flag it, with a note ↗</a></p>` : '')(C.flagUrl(S.config.feedback?.form, p))}
     <label class="small muted" for="note">Your note (stays on this device)</label><textarea id="note" data-note="${esc(p.id)}" placeholder="Why it matters, what to check, how it relates to your work…">${esc(S.user.notes[p.id] || '')}</textarea>
     ${(() => { const rel = related(p); return rel.length ? `<h3 style="margin-top:18px">Related papers in the radar</h3>${rel.map(q => `<div class="mini-paper"><button type="button" data-open="${esc(q.id)}">${esc(q.title)}</button><small>${esc(journalShort(q.journal))} · ${dayLabel(q.published || q.added)}</small></div>`).join('')}` : ''; })()}`;
   const d = $('#dialog');

@@ -40,9 +40,15 @@ export function normalizePaper(raw, ctx) {
     ident: str(raw.ident, 300), dataDetail: str(raw.dataDetail, 300),
     topics: [...new Set(arr(raw.topics).map(t => fold(t).trim()).filter(t => t.length > 1))].slice(0, 6),
     geo: arr(raw.geo).map(g => str(g, 60)).filter(Boolean).slice(0, 5), period: str(raw.period, 40),
-    jel: arr(raw.jel).map(j => str(j, 4)).filter(Boolean).slice(0, 5), by: str(raw.by, 80) || 'rules', at: str(raw.at, 10),
+    jel: arr(raw.jel).map(j => str(j, 4)).filter(Boolean).slice(0, 5), by: str(raw.by, 80) || 'rules', at: str(raw.at, 10), corrected: /^\d{4}-\d\d-\d\d$/.test(raw.corrected) ? raw.corrected : '',
     text: arr(raw.text).filter(t => t === 'abstract' || t === 'conclusion'),
   };
+}
+
+/** The reader's flag link: the Google Form's pre-filled link with PAPERID and PAPERTITLE as placeholders. */
+export function flagUrl(template, p) {
+  if (!/^https:\/\/docs\.google\.com\/forms\//.test(str(template)) || !template.includes('PAPERID')) return '';
+  return template.replace('PAPERID', encodeURIComponent(p.id)).replace('PAPERTITLE', encodeURIComponent(p.title.slice(0, 300)));
 }
 
 export function mergeShards(shards, ctx) {

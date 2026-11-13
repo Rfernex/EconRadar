@@ -1,6 +1,6 @@
 // Focus areas: a whole literature followed since a start date (radar/focus.json), with the
 // citation links between its papers. Pure data logic, no DOM and no storage.
-import { fold, queryTerms, authorKey } from './core.mjs?v=4';
+import { fold, queryTerms, authorKey } from './core.mjs?v=5';
 
 const arr = v => (Array.isArray(v) ? v : []);
 const num = v => (Number.isFinite(+v) ? +v : 0);

@@ -145,11 +145,19 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['econradar-v5', 'reading-room-v26', 'econradar-v6'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v6', 'reading-room-v26', 'econradar-v7'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
-  assert.deepEqual(deleted, ['econradar-v5']);
+  assert.deepEqual(deleted, ['econradar-v6']);
   let response; handlers.fetch({ request: { url: 'https://example.org/Apps/radar/data/index.json', method: 'GET', mode: 'cors' }, respondWith: r => { response = r; } });
   assert.equal(await response, 'cached');
+});
+
+test('the flag link pre-fills the Google Form with the paper, and only a Google Form', () => {
+  const p = { id: 'W1', title: 'Wages & Jobs' };
+  const form = 'https://docs.google.com/forms/d/e/abc/viewform?usp=pp_url&entry.1=PAPERID&entry.2=PAPERTITLE';
+  assert.equal(C.flagUrl(form, p), 'https://docs.google.com/forms/d/e/abc/viewform?usp=pp_url&entry.1=W1&entry.2=Wages%20%26%20Jobs');
+  assert.equal(C.flagUrl('', p), '');
+  assert.equal(C.flagUrl('https://evil.example/?x=PAPERID', p), '');
 });

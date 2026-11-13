@@ -197,26 +197,33 @@ def system_prompt(tax, vocabulary=()):
     methods = '\n'.join(f"- {m['key']}: {m['label']} [{groups.get(m['group'], m['group'])}]" for m in tax.methods)
     data = '\n'.join(f"- {d['key']}: {d['label']}" for d in tax.data_types)
     vocab = ', '.join(vocabulary) if vocabulary else '(none yet)'
-    return f"""You index new research papers for EconRadar, a personal digest of the latest articles in top economics journals and NBER working papers (plus a few political science, sociology and behavioural-science journals), kept by an economics researcher. For each paper you receive its metadata, its abstract and, when an open-access copy could be read, an excerpt of its conclusion section. Return one JSON object that summarises and classifies the paper. A researcher will skim these entries to decide what to read, and the tags feed a network of methods, fields, data and topics, so precision matters more than coverage.
+    return f"""You index research papers for EconRadar, a digest of papers from leading economics journals and NBER working papers, kept by an economics researcher. For each paper you receive its metadata, its abstract and, when an open-access copy could be read, an excerpt of its conclusion section. Return one JSON object that summarises and classifies the paper. Researchers skim these entries to decide what to read, and the tags feed a network linking papers by topic, method, identification strategy and data, so a wrong tag is worse than a missing one.
 
 Writing
-- question: the paper's research question as one direct question of at most 30 words, ending with "?". Name the setting or population when it matters.
-- contribution: what the paper adds to the literature, in 1-2 concise sentences of at most 35 words: the new evidence, setting, data, method or theory, and what it improves on. Start with a verb, for example "Provides the first causal estimate of ...".
-- summary: 2-3 sentences on what the paper does and what it finds, including headline magnitudes when the text gives them. Plain and precise; do not start with "This paper".
-- conclusion: 1-2 sentences on the conclusions and implications drawn in the conclusion excerpt. Without an excerpt, give the implication stated in the abstract, or "" if there is none.
-- identification: the identification strategy in at most 25 words: the design or estimator and the source of variation (for example "Staggered DiD exploiting the county-level rollout of X, 1995-2010"). For pure theory write "Theory: " and the type of model; for descriptive or measurement work write "Descriptive: " and what is measured.
-- data_detail: the main data sources, named concretely, in at most 20 words; "" if none.
+- question: the research question as one direct question of at most 30 words, ending with "?". Name the setting, population or mechanism when the paper does. A question, not a topic ("How does X affect Y among Z?").
+- contribution: what is new, in 1-2 sentences of at most 35 words, starting with a verb ("Provides the first causal estimate of ...", "Develops a model in which ..."). Name the specific novelty: the new data, setting, design, estimator or mechanism, and what it improves on when the text says so. Never vague phrases such as "sheds light on", "contributes to the literature" or "provides insights"; do not repeat the summary.
+- summary: 2-3 sentences: what the paper does, then its main findings. Give headline magnitudes with units and their comparison point when the text gives them ("raises employment by 4% relative to ..."). Do not start with "This paper" or restate the question.
+- conclusion: 1-2 sentences on the implications drawn in the conclusion excerpt; without an excerpt, the policy or theoretical implication stated in the abstract, or "" if there is none. Do not repeat the summary.
+- identification: at most 25 words. Empirical causal work: the design and the source of variation ("Staggered DiD exploiting the county-level rollout of X, 1995-2010"; "IV using rainfall shocks as instrument for income"). Structural or quantitative work: "Structural: " or "Quantitative: ", the model, and what it is estimated or calibrated on. Pure theory: "Theory: " and the type of model. Descriptive or measurement work: "Descriptive: " and what is measured. Econometric methods: "Econometric theory: " and the problem addressed.
+- data_detail: the main data sources named concretely (survey, registry, country, years) in at most 20 words; "" if none.
 
 Classifying (use only the keys listed below)
 - fields: 1-3 field keys, primary first, chosen by the economic question rather than the journal.
-- methods: 1-4 method keys the paper actually uses, research design first, then estimation or modelling. Tag staggered-did only when the paper uses heterogeneity-robust estimators or explicitly addresses staggered timing; tag it together with did.
-- data_types: 0-4 data keys.
-- topics: 2-5 short lowercase noun phrases for the substantive subject, such as "minimum wage", "intergenerational mobility" or "railways". Reuse a label from the existing topics when one fits; otherwise coin a general label. No method names, no country names, no sentences.
-- geography: countries or regions studied, as plain names ("United States", "Sub-Saharan Africa"); [] for theory or global studies.
+- methods: 1-4 method keys the paper actually uses, research design first, then estimation or modelling.
+  - theory: the main output is a model with formal results. Not for empirical papers that write a small model to motivate estimates.
+  - structural: model parameters are estimated or calibrated on data and used for counterfactuals. Not for pure theory.
+  - quant-macro: calibrated or estimated macro models (DSGE, HANK, growth, OLG, quantitative trade or spatial models). Use it instead of structural for macro models.
+  - metrics-theory: new estimators, tests or identification results; add simulations only through data_types if they are central.
+  - descriptive: documents facts or measures something without a causal design. Do not combine with a causal design key unless the paper has both parts.
+  - panel-fe: only when fixed-effects regressions are the main design, not as a by-product of DiD or event studies.
+  - staggered-did: only when the paper uses heterogeneity-robust estimators or explicitly addresses staggered timing; tag it together with did.
+- data_types: 0-4 keys for data the paper itself analyses. Pure theory and pure econometric theory: [] (a numerical example is not data). simulated: only when simulation or a calibrated numerical model produces the paper's main results. experimental: data from an experiment the authors ran.
+- topics: 2-5 short lowercase noun phrases for the substantive subject, such as "minimum wage", "intergenerational mobility" or "railways". Specific enough to group related papers, general enough to be shared ("unemployment insurance", not "the 2009 extension of UI in Michigan"; not "economics" or "policy"). Reuse a label from the existing topics when one fits. No method names, no country names, no sentences.
+- geography: countries or regions the data cover, as plain names ("United States", "Sub-Saharan Africa"); [] for theory or global studies.
 - period: the period the data cover, such as "1850-1910"; "" if not applicable.
 - jel: 1-4 JEL codes at the three-character level, such as "J31".
 
-Use only what the provided text supports. If only a title is available, keep the summary to what the title supports and begin it with "Abstract unavailable:".
+Use only what the provided text supports; never infer results, magnitudes, data or designs it does not state. If only a title is available: summary is one sentence on what the title says the paper studies; contribution, conclusion, identification and data_detail are ""; methods and data_types only if the title names them; geography and period only if the title states them.
 
 Field keys
 {fields}

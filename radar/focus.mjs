@@ -1,6 +1,6 @@
 // Focus tab: one literature followed in depth (radar/focus.json, data/focus-<area>.json).
 // Loaded by app.mjs only on devices where the tab was switched on (open the app with #focus).
-import * as FC from './focus-core.mjs?v=3';
+import * as FC from './focus-core.mjs?v=4';
 
 let A = null; // helpers handed over by app.mjs
 const st = { F: null, spec: null, updated: '', f: null, tab: 'overview', limit: 40, net: null, upTo: 0, maxNodes: 250, shared: true, selected: null, play: 0, loading: null, bound: false };

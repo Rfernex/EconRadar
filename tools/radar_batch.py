@@ -80,16 +80,20 @@ def instructions(tax, vocabulary):
             'Write in English even when the abstract is not.\n')
 
 
-def export(target, tax, n, conclusions):
+def export(target, tax, n, conclusions, ids=None):
     blocks = []
-    for p in target.pending()[:n]:
+    papers = [target.rows[i] for i in ids if i in target.rows] if ids else target.pending()[:n]
+    for p in papers:
         conc = conclusions.get(p['id'], '')[:CONCLUSION_CHARS]
         blocks.append(f"### {p['id']}\n" + enrich.user_message(p, target.venue(p, tax), p.get('abstract', ''), conc))
     return '\n\n'.join(blocks) + ('\n' if blocks else '')
 
 
-def import_answers(target, tax, answers, by, conclusions):
+def import_answers(target, tax, answers, by, conclusions, dry_run=False):
+    """Validate and store answers. With dry_run, validate only: returns the validated answers
+    in place of the stored ids, and nothing is written (for comparing models on the same papers)."""
     done, rejected, unknown = [], {}, []
+    checked = {}
     today = date.today().isoformat()
     for pid, raw in answers.items():
         p = target.rows.get(pid)
@@ -104,6 +108,9 @@ def import_answers(target, tax, answers, by, conclusions):
         if target.area:
             out = {k: v for k, v in out.items() if k in ('q', 'contribution', 'summary', 'ident', 'fields', 'methods', 'data',
                                                           'dataDetail', 'topics', 'geo', 'period', 'jel')}
+        if dry_run:
+            checked[pid] = out
+            continue
         if not out.get('topics') and p.get('topics'):
             out['topics'] = p['topics']
         p.update(out)
@@ -115,7 +122,7 @@ def import_answers(target, tax, answers, by, conclusions):
         left = {k: v for k, v in conclusions.items() if k not in done}
         if CONCLUSIONS.exists() and len(left) != len(conclusions):
             CONCLUSIONS.write_text(json.dumps(left, ensure_ascii=False))
-    return done, rejected, unknown
+    return (checked if dry_run else done), rejected, unknown
 
 
 def main(argv=None):
@@ -126,6 +133,9 @@ def main(argv=None):
     ap.add_argument('--answers', help='JSON file of answers to import')
     ap.add_argument('--by', default='claude-sonnet-5-5', help='recorded as the author of the summaries')
     ap.add_argument('--area', help='a Focus area key instead of the radar')
+    ap.add_argument('--ids', help='export: a file of paper ids (one per line) to export instead of the next pending papers')
+    ap.add_argument('--dry-run', action='store_true', help='import: validate only and write the validated answers to --out')
+    ap.add_argument('--rules-vocab', action='store_true', help='instructions: build the topic list only from papers no model has summarised')
     ap.add_argument('--data-dir', default=str(cl.DATA), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     tax = enrich.Taxonomy(json.loads(cl.CONFIG.read_text()))
@@ -137,11 +147,15 @@ def main(argv=None):
                           'conclusionsCached': len(load_conclusions())}))
         return 0
     if args.command == 'instructions':
-        vocab = cl.Store(Path(args.data_dir)).top_topics() if not args.area else []
+        store = cl.Store(Path(args.data_dir))
+        if args.rules_vocab:
+            store.rows = {k: p for k, p in store.rows.items() if p.get('by', 'rules') == 'rules'}
+        vocab = store.top_topics() if not args.area else []
         print(instructions(tax, vocab))
         return 0
     if args.command == 'export':
-        text = export(target, tax, args.n, load_conclusions())
+        ids = Path(args.ids).read_text().split() if args.ids else None
+        text = export(target, tax, args.n, load_conclusions(), ids)
         if args.out:
             Path(args.out).write_text(text)
             print(f'{text.count("### ")} papers written to {args.out}')
@@ -149,7 +163,12 @@ def main(argv=None):
             print(text)
         return 0
     answers = json.loads(Path(args.answers).read_text())
-    done, rejected, unknown = import_answers(target, tax, answers, args.by, load_conclusions())
+    done, rejected, unknown = import_answers(target, tax, answers, args.by, load_conclusions(), args.dry_run)
+    if args.dry_run:
+        if args.out:
+            Path(args.out).write_text(json.dumps(done, ensure_ascii=False, indent=1))
+        print(json.dumps({'valid': len(done), 'rejected': rejected, 'unknownIds': unknown}))
+        return 1 if rejected or unknown else 0
     print(json.dumps({'stored': len(done), 'rejected': rejected, 'unknownIds': unknown, 'stillWithout': len(target.pending())}))
     return 1 if rejected or unknown else 0
 

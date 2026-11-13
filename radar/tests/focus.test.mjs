@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import * as C from '../core.mjs?v=4';
+import * as C from '../core.mjs?v=5';
 import * as FC from '../focus-core.mjs';
 
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));

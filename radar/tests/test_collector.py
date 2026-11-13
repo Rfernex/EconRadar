@@ -3,6 +3,8 @@ import json
 import sys
 import tempfile
 import unittest
+import contextlib
+import io
 import unittest.mock
 from pathlib import Path
 from unittest import mock
@@ -476,6 +478,55 @@ class Batch(unittest.TestCase):
             self.assertEqual((again['W1']['by'], again['W1']['fields'], again['W1']['topics']), ('claude-sonnet-5-5', ['labour'], ['wages']))
             self.assertEqual(rb.Target(tmp).pending(), [])
             self.assertIn('HOW TO ANSWER', rb.instructions(TAX, ['wages']))
+
+    def test_dry_run_compares_a_model_on_papers_already_summarised(self):
+        import radar_batch as rb
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            store.add({'id': 'W2', 'journal': 'qje', 'title': 'Old', 'published': '2021-01-01', 'added': '2026-11-01',
+                       'authors': [{'n': 'X'}], 'abstract': 'Old paper.', 'by': 'claude-sonnet-5-5', 'summary': 'Kept.'})
+            store.save()
+            target = rb.Target(tmp)
+            self.assertEqual(rb.export(target, TAX, 10, {}, ids=['W2', 'W404']).count('### '), 1)
+            answer = {'question': 'Q?', 'contribution': 'C.', 'summary': 'New.', 'conclusion': '', 'fields': ['labour'], 'methods': ['theory'],
+                      'identification': 'Theory: x', 'data_types': [], 'data_detail': '', 'topics': ['x'], 'geography': [], 'period': '', 'jel': []}
+            checked, rejected, _ = rb.import_answers(target, TAX, {'W2': answer}, 'claude-haiku-5-5', {}, dry_run=True)
+            self.assertEqual((checked['W2']['summary'], rejected), ('New.', {}))
+            again = {p['id']: p for _, p in cl.Store(Path(tmp)).papers()}
+            self.assertEqual((again['W2']['summary'], again['W2']['by']), ('Kept.', 'claude-sonnet-5-5'))
+
+
+class Flags(unittest.TestCase):
+    """Readers' flags from the Google Form's responses sheet."""
+
+    def test_flags_are_listed_then_fixed_or_dismissed(self):
+        import radar_flags as rf
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            store.add({'id': 'W1', 'journal': 'aer', 'title': 'Minimum Wages', 'published': '2026-10-01', 'added': '2026-11-10',
+                       'authors': [{'n': 'A'}], 'abstract': 'We study wages.', 'by': 'claude-sonnet-5-5', 'summary': 'Wages rose.'})
+            store.save()
+            sheet = Path(tmp) / 'flags.csv'
+            sheet.write_text('Timestamp,Paper id,Paper title,What is inaccurate?,Your note\n'
+                             '13/11/2026 10:00:00,W1,Minimum Wages,Summary,"It says wages rose, they fell."\n'
+                             '13/11/2026 11:00:00,W9,Gone,Tags,x\n'
+                             '13/11/2026 12:00:00,,,,empty row\n')
+            flags = rf.parse(sheet.read_text())
+            self.assertEqual([(f['paper'], f['what']) for f in flags], [('W1', 'Summary'), ('W9', 'Tags')])
+            with unittest.mock.patch.object(rf, 'DECISIONS', Path(tmp) / 'decisions.json'):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rf.main(['list', '--csv', str(sheet), '--data-dir', tmp])
+                self.assertIn('they fell', out.getvalue())
+                self.assertIn('Summary: Wages rose.', out.getvalue())
+                rf.main(['resolve', flags[0]['flag'], '--fixed', '--reason', 'Re-summarised', '--csv', str(sheet), '--data-dir', tmp])
+                rf.main(['resolve', flags[1]['flag'], '--dismissed', '--csv', str(sheet), '--data-dir', tmp])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rf.main(['list', '--csv', str(sheet), '--data-dir', tmp])
+                self.assertTrue(out.getvalue().startswith('0 open flags (2 in all)'))
+            again = {p['id']: p for _, p in cl.Store(Path(tmp)).papers()}
+            self.assertTrue(again['W1']['corrected'])
 
 
 class Newsletter(unittest.TestCase):

@@ -45,6 +45,14 @@ python3 tools/radar_batch.py import --answers /tmp/answers.json --by claude-sonn
 
 Setup, once: create a Buttondown account, put its username in `config.json` → `newsletter.buttondown` (the subscribe form appears), and make `BUTTONDOWN_API_KEY` available to the scheduled task (e.g. in `~/.zshenv`). The routine only creates drafts; review and send them from Buttondown (`newsletter.py send --publish` sends directly). Tags may need a paid Buttondown plan; without them everyone gets every section.
 
+### Readers' flags
+
+Each paper links to a Google Form ("Something inaccurate in this summary? Flag it") pre-filled with the paper's id and title; the reader says what is wrong and adds a note. Nothing a reader sends changes the app: the flags wait for the maintainer.
+
+Setup, once: create a Google Form with short-answer questions **Paper id** and **Paper title**, a checkbox question **What is inaccurate?** (question, contribution, summary, identification, tags, other) and a paragraph question **Your note**. Use *Get pre-filled link*, answer `PAPERID` and `PAPERTITLE` to the first two, and put the link in `config.json` → `feedback.form`. Link the form to a responses sheet, share the sheet as "anyone with the link can view", and put its CSV export link (`https://docs.google.com/spreadsheets/d/<id>/export?format=csv`) in `ECONRADAR_FLAGS_CSV` (e.g. in `~/.zshenv`), never in the repository.
+
+`python3 tools/radar_flags.py list` shows the open flags, each with the paper's current summary and abstract. The weekly update lists them in its report with a suggested correction but changes nothing. To act on one, ask a session to fix it (it re-answers the paper or corrects the field), then `radar_flags.py resolve <flag> --fixed`, which marks the paper "corrected after a reader's flag" in the app; or `resolve <flag> --dismissed --reason "..."`. Decisions are kept on the Mac in `.radar-cache/flags.json`.
+
 ### Running it by hand
 
 ```
