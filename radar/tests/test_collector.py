@@ -569,9 +569,10 @@ class Newsletter(unittest.TestCase):
             store.add({**base, 'id': 'OLD', 'journal': 'aer', 'title': 'Minimum wages before', 'published': '2023-05-01', 'added': '2026-11-01',
                        'fields': ['labour'], 'methods': ['did'], 'topics': ['minimum wage']})
             store.add({**base, 'id': 'NEW', 'journal': 'qje', 'title': 'Minimum wages now', 'published': '2026-11-02', 'added': '2026-11-10',
-                       'fields': ['labour'], 'methods': ['did', 'rct'], 'topics': ['minimum wage'], 'contribution': 'Shows X.', 'ident': 'Borders.'})
+                       'fields': ['labour'], 'methods': ['did', 'rct'], 'topics': ['minimum wage'], 'contribution': 'Shows X.', 'ident': 'Borders.',
+                       'data': ['admin', 'survey']})
             store.add({**base, 'id': 'NB', 'journal': 'nber', 'title': 'A tax paper', 'published': '2026-11-09', 'added': '2026-11-11',
-                       'fields': ['public'], 'methods': ['structural'], 'topics': ['wealth tax']})
+                       'fields': ['public'], 'methods': ['structural'], 'topics': ['wealth tax'], 'data': ['admin']})
             store.add({**base, 'id': 'BACK', 'journal': 'aer', 'title': 'Backfilled', 'published': '2021-01-01', 'added': '2026-11-11', 'fields': ['labour']})
             store.save()
             corpus = nl.Corpus(tmp, CONFIG)
@@ -583,9 +584,12 @@ class Newsletter(unittest.TestCase):
             self.assertIn('minimum wage', labour['papers'][0]['related'][0]['why'])
             self.assertEqual(labour['authors'][0], {'name': 'Ada Lovelace', 'papers': 1, 'before': 2, 'topics': ['minimum wage'], 'last': {
                 'id': 'OLD', 'title': 'Minimum wages before', 'published': '2023-05-01', 'journal': 'AER'}}, 'usual topics and latest earlier paper')
-            self.assertEqual([(x['key'], x['share'], x['slot']) for x in issue['mix']['ident']['parts']], [('did', 0.5, 1), ('rct', 0.5, 2)])
-            self.assertEqual(issue['mix']['ident']['papers'], 1)
-            self.assertEqual(labour['mix']['ident']['parts'][0]['slot'], 1, 'a method keeps its colour in the field sections')
+            self.assertEqual(issue['identCats'][0]['key'], 'rct')
+            rows = {r['key']: (r['papers'], r['parts']) for r in issue['dataByIdent']['rows']}
+            self.assertEqual(rows, {'admin': (2, [{'cat': 'rct', 'count': 1}]), 'survey': (1, [{'cat': 'rct', 'count': 1}])},
+                             'a paper with an RCT and a DiD counts once, as an experiment; the structural paper has no design')
+            self.assertEqual((issue['dataByIdent']['all']['papers'], issue['dataByIdent']['noData']), (2, 0))
+            self.assertEqual(labour['dataByIdent']['rows'][0]['parts'], [{'cat': 'rct', 'count': 1}])
             self.assertEqual([m['key'] for m in issue['methods']], ['structural'])
             self.assertEqual(issue['families']['public']['methods'], [{'label': 'Structural estimation', 'count': 1}])
             self.assertEqual(issue['families']['public']['authors'][0]['topics'], ['minimum wage'], 'earlier topics come first')
@@ -594,7 +598,8 @@ class Newsletter(unittest.TestCase):
             self.assertIn('## Page 2', body)
             self.assertIn('Latest paper already in the radar', body)
             self.assertIn('Usual topics', body)
-            self.assertIn('border-spacing:2px 0', body, 'stacked bars')
+            self.assertIn('No identification design', body, 'the stacked bars and their legend')
+            self.assertEqual(body.count('<colgroup>'), 3, 'one chart on page 1 and one per field with papers')
             self.assertIn('width:100%;border-radius', body, 'the most used method fills the bar scale')
             self.assertNotIn("'history' in subscriber.tags", body, 'empty sections are left out')
             os_env = dict(__import__('os').environ); os_env.pop('BUTTONDOWN_API_KEY', None)

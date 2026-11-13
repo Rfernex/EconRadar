@@ -290,19 +290,29 @@ function nlPaper(r, related = false) {
     ${r.ident ? `<p class="p-line${r.byModel ? '' : ' auto'}"><b>Identification</b>${esc(r.ident)}</p>` : ''}
     ${related && r.related?.length ? `<p class="small muted nl-rel"><b>Relates to</b> ${r.related.map(x => `<button type="button" class="link" ${S.byId?.has(x.id) ? `data-open="${esc(x.id)}"` : ''}>${esc(x.title)}</button> (${esc(x.journal)} ${esc(x.year)}${x.why.length ? ', shares ' + esc(x.why.join(', ')) : ''})`).join('; ')}</p>` : ''}</div>`;
 }
-const seriesVar = slot => (slot ? `var(--series-${slot})` : 'var(--series-other)');
-function nlMix(title, m) {
-  // One 100% bar per group: how the week's identification (or data) tags split; colours follow the key across the issue.
-  if (!m?.parts?.length) return '';
-  return `<div class="nl-mix"><p class="small"><b>${title}</b> <span class="muted">· ${fmt(m.papers)} paper${m.papers === 1 ? '' : 's'}</span></p>
-    <div class="nl-stack" role="img" aria-label="${esc(`${title}: ${m.parts.map(x => `${x.label} ${pct(x.share)}`).join(', ')}`)}">${m.parts.map(x => `<i style="flex:${x.share};background:${seriesVar(x.slot)}" data-tip="${esc(`<b>${x.label}</b><span>${pct(x.share)} of ${title.toLowerCase()} tags · ${x.count}</span>`)}"></i>`).join('')}</div>
-    <p class="nl-legend small">${m.parts.map(x => `<span><i class="sq" style="background:${seriesVar(x.slot)}"></i>${esc(x.label)} <span class="muted">${pct(x.share)}</span></span>`).join('')}</p></div>`;
+function nlIdent(chart, cats = [], legend = true) {
+  // Rows of data types: each a 0-100% bar of its papers by identification design (grey = no design), All papers below.
+  if (!chart?.rows?.length) return '';
+  const info = Object.fromEntries(cats.map(c => [c.key, c]));
+  const row = (r, all = false) => {
+    const none = r.papers - r.parts.reduce((n, x) => n + x.count, 0);
+    return `<div class="nl-irow${all ? ' all' : ''}"><span class="lbl">${esc(r.label)}</span>
+      <div class="nl-ibar" role="img" aria-label="${esc(`${r.label}: ${r.papers} papers; ${r.parts.map(x => `${info[x.cat]?.label} ${x.count}`).join(', ')}; no design ${none}`)}">${r.parts.map(x => `<i style="width:${(100 * x.count) / r.papers}%;background:${info[x.cat]?.color}" data-tip="${esc(`<b>${r.label} · ${info[x.cat]?.label}</b><span>${x.count} of ${r.papers} papers (${pct(x.count / r.papers)})</span>`)}"></i>`).join('')}${none > 0 ? `<i class="none" style="flex:1" data-tip="${esc(`<b>${r.label} · no identification design</b><span>${none} of ${r.papers} papers (${pct(none / r.papers)})</span>`)}"></i>` : ''}</div>
+      <span class="num">${fmt(r.papers)}</span></div>`;
+  };
+  const groups = [];
+  cats.forEach(c => { if (!groups.length || groups.at(-1)[0] !== c.group) groups.push([c.group, []]); groups.at(-1)[1].push(c); });
+  return `<div class="nl-ident"><div class="nl-irow head"><span></span><span class="small muted">Share of the papers using that data, by identification design</span><span class="small muted num">Papers</span></div>
+    ${chart.rows.map(r => row(r)).join('')}${row(chart.all, true)}
+    <div class="nl-irow axis"><span></span><div class="ticks">${[0, 25, 50, 75, 100].map(t => `<span style="left:${t}%">${t}%</span>`).join('')}</div><span></span></div></div>
+    ${legend ? `<div class="nl-ilegend">${[...groups, ['None', [{ label: 'No identification design', short: 'No design', none: true }]]].map(([g, cs]) => `<div class="grp"><span class="small muted">${esc(g)}</span>${cs.map(c => `<span class="box${c.none ? ' none' : ''}" ${c.none ? '' : `style="background:${c.color};color:${c.ink}"`} title="${esc(c.label)}">${esc(c.short || c.label)}</span>`).join('')}</div>`).join('')}</div>` : ''}
+    ${legend && chart.noData ? `<p class="small muted">A paper using several kinds of data appears in each row. ${fmt(chart.noData)} paper${chart.noData === 1 ? ' uses' : 's use'} no data (theory) and appear${chart.noData === 1 ? 's' : ''} only under All papers.</p>` : ''}`;
 }
 function nlBars(rows, total) {
   // Other approaches: the share of the week's papers using each, on the scale of the largest share.
   if (!rows?.length) return '';
   const share = r => r.share ?? (total ? r.count / total : 0), top = Math.max(...rows.map(share)) || 1;
-  return `<div class="nl-bars" role="list" aria-label="Other approaches"><b class="small">Other approaches</b>${rows.map(r => `<div class="nl-bar" role="listitem"><span>${esc(r.label)}</span><i><b style="width:${Math.max(1, Math.round(100 * share(r) / top))}%"></b></i><span class="num">${pct(share(r))} · ${r.count}</span></div>`).join('')}</div>`;
+  return `<div class="nl-bars" role="list" aria-label="Other approaches"><b class="small">Other approaches: share of papers using each</b>${rows.map(r => `<div class="nl-bar" role="listitem"><span>${esc(r.label)}</span><i><b style="width:${Math.max(1, Math.round(100 * share(r) / top))}%"></b></i><span class="num">${pct(share(r))} · ${r.count}</span></div>`).join('')}</div>`;
 }
 function nlAuthors(authors) {
   if (!authors.length) return '';
@@ -327,15 +337,15 @@ function newsletterHtml(issue) {
       <p><b>${fmt(c.total)} new papers</b>: ${fmt(c.journals)} in the journals and ${fmt(c.nber)} NBER working papers. The radar now holds ${fmt(c.corpus)} papers published since 2020.</p>
       ${issue.brief ? `<p class="nl-brief">${esc(issue.brief)}</p>` : ''}
       <h3>Highlights</h3>${issue.highlights.map(r => nlPaper(r)).join('')}
-      ${issue.mix || issue.methods.length ? `<h3>Methods and data this week</h3><p class="small muted">How the identification strategies and data types used this week split (a paper can use several), then the share of papers using each other approach.</p>
-        ${nlMix('Identification', issue.mix?.ident)}${nlMix('Data', issue.mix?.data)}${nlBars(issue.methods, c.total)}` : ''}
+      ${issue.dataByIdent || issue.methods.length ? `<h3>Data and identification this week</h3>
+        ${nlIdent(issue.dataByIdent, issue.identCats)}${nlBars(issue.methods, c.total)}` : ''}
       ${tr.methods.length || tr.topics.length || tr.data.length ? `<h3>Rising over the past three months</h3><p class="small muted">Share of papers published in the last 90 days, against the twelve months before.</p><ul class="nl-list">${trendRows('Methods', tr.methods)}${trendRows('Topics', tr.topics)}${trendRows('Data', tr.data)}</ul>` : ''}
     </section>
     <section class="panel nl-page"><span class="eyebrow">Page 2 · Your fields</span>
       <div class="chips" role="group" aria-label="Fields shown on page 2">${fams.map(([k, f]) => `<button type="button" class="chip btnish" data-nl-fam="${k}" aria-pressed="${pick.includes(k)}"><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">${f.count}</span></button>`).join('')}</div>
       <p class="small muted">${pick.length ? 'Showing the fields you picked (remembered on this device).' : 'Showing every field. Pick yours to keep page 2 to them.'}</p>
       ${shown.map(([k, f]) => `<div class="nl-fam"><h3><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">· ${f.count} new</span></h3>
-        ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${nlMix('Identification', f.mix?.ident)}${nlMix('Data', f.mix?.data)}
+        ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${nlIdent(f.dataByIdent, issue.identCats, false)}
         ${f.methods.length ? `<p class="small"><b>Other approaches</b> ${f.methods.map(m => typeof m === 'string' ? esc(m) : `${esc(m.label)} <span class="muted">(${m.count})</span>`).join(', ')}</p>` : ''}
         ${f.papers.map(r => nlPaper(r, true)).join('')}
         ${nlAuthors(f.authors)}</div>`).join('')}
