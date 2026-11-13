@@ -83,6 +83,14 @@ def clean(value):
     return re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', ' ', str(value or '')))).strip()
 
 
+def person_name(value):
+    """An author's name without the affiliation letters some sources append ("Jonathan Gruber A B")."""
+    words = clean(value).split(' ')
+    while len(words) > 2 and re.fullmatch(r'[A-Z]', words[-1]):
+        words.pop()
+    return ' '.join(words)
+
+
 LEADING_LABEL = re.compile(r'^\s*(?:abstract|summary)\b[\s.:\u2014-]*', re.I)
 
 
@@ -193,7 +201,7 @@ def candidate(work, journals, journal=None):
     authors = []
     for a in work.get('authorships') or []:
         person = a.get('author') or {}
-        name = clean(person.get('display_name'))
+        name = person_name(person.get('display_name'))
         if not name:
             continue
         inst = next((clean(i.get('display_name')) for i in a.get('institutions') or [] if i.get('display_name')), '')
@@ -624,6 +632,8 @@ class Store:
             abstracts = json.loads(side.read_text()) if side and side.exists() else {}
             for p in papers:
                 p.setdefault('abstract', abstracts.get(p['id'], ''))
+                for a in p.get('authors') or []:  # names stored before person_name existed
+                    a['n'] = person_name(a.get('n'))
                 if p.get('doi'):
                     p.setdefault('url', f"https://doi.org/{p['doi']}")
                 self.rows[p['id']] = p

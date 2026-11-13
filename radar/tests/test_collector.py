@@ -581,13 +581,45 @@ class Newsletter(unittest.TestCase):
             labour = issue['families']['labour']
             self.assertEqual(labour['papers'][0]['related'][0]['id'], 'OLD')
             self.assertIn('minimum wage', labour['papers'][0]['related'][0]['why'])
-            self.assertEqual(labour['authors'][0], {'name': 'Ada Lovelace', 'papers': 1, 'before': 2})
+            self.assertEqual(labour['authors'][0], {'name': 'Ada Lovelace', 'papers': 1, 'before': 2, 'last': {
+                'id': 'OLD', 'title': 'Minimum wages before', 'published': '2023-05-01', 'journal': 'AER'}}, 'with the latest earlier paper')
+            self.assertEqual([(m['key'], m['share']) for m in issue['ident']], [('did', 0.5), ('rct', 0.5)])
             self.assertEqual({m['key'] for m in issue['ident']}, {'did', 'rct'})
             self.assertEqual([m['key'] for m in issue['methods']], ['structural'])
             body = nl.render(issue)
             self.assertIn("{% if 'labour' in subscriber.tags or not subscriber.tags %}", body)
             self.assertIn('## Page 2', body)
+            self.assertIn('Latest paper already in the radar', body)
+            self.assertIn('width:100%;border-radius', body, 'the most used method fills the bar scale')
             self.assertNotIn("'history' in subscriber.tags", body, 'empty sections are left out')
             os_env = dict(__import__('os').environ); os_env.pop('BUTTONDOWN_API_KEY', None)
             with unittest.mock.patch.dict('os.environ', os_env, clear=True), self.assertRaises(SystemExit):
                 nl.send(issue)
+
+    def test_authors_versions_names_and_trends(self):
+        import newsletter as nl
+        from datetime import date
+        self.assertEqual(cl.person_name('Jonathan Gruber A B'), 'Jonathan Gruber')
+        self.assertEqual(cl.person_name('Pengfei Wang'), 'Pengfei Wang')
+        self.assertEqual(nl.name_key('Amy N. Finkelstein'), nl.name_key('Amy Finkelstein'))
+        self.assertEqual(nl.pct(0.004), '0.4%')
+        self.assertEqual(nl.pct(0.25), '25%')
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            amy = lambda pid: [{'n': 'Amy N. Finkelstein' if pid == 'WP' else 'Amy Finkelstein', 'id': 'A-' + pid}]
+            common = {'abstract': 'x', 'fields': ['public'], 'topics': ['health insurance'], 'methods': ['rct']}
+            store.add({**common, 'id': 'WP', 'journal': 'nber', 'title': 'Insurance and Health: Evidence', 'published': '2025-03-01',
+                       'added': '2026-01-01', 'authors': amy('WP'), 'by': 'rules'})
+            store.add({**common, 'id': 'OLD', 'journal': 'aer', 'title': 'An earlier insurance paper', 'published': '2024-03-01',
+                       'added': '2026-01-01', 'authors': [{'n': 'Someone Else', 'id': 'A9'}], 'by': 'rules'})
+            store.add({**common, 'id': 'PUB', 'journal': 'qje', 'title': 'Insurance and health - evidence', 'published': '2026-11-02',
+                       'added': '2026-11-10', 'authors': amy('PUB') + [{'n': 'Liran Einav B', 'id': 'A7'}], 'by': 'claude-sonnet-5-5'})
+            store.save()
+            reloaded = cl.Store(Path(tmp))
+            self.assertEqual(reloaded.rows['PUB']['authors'][1]['n'], 'Liran Einav', 'stored names are cleaned on load')
+            issue = nl.build(nl.Corpus(tmp, CONFIG), date(2026, 11, 12))
+            public = issue['families']['public']
+            self.assertEqual(public['authors'][0]['before'], 1, 'the same person under another id and spelling')
+            self.assertEqual([r['id'] for r in public['papers'][0]['related']], ['OLD'], 'its own working paper is not "related"')
+            self.assertEqual(issue['trends'], {'methods': [], 'topics': [], 'data': []}, 'no trends while older papers have rule tags only')
+            self.assertEqual(issue['trendsCoverage'], 0.0)

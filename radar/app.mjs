@@ -6,7 +6,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = n => new Intl.NumberFormat('en-GB').format(n);
-const pct = x => `${Math.round(x * 100)}%`;
+const pct = x => (x < 0.1 ? `${(x * 100).toFixed(1)}%` : `${Math.round(x * 100)}%`);
 const dayLabel = (d, opts = { day: 'numeric', month: 'short', year: 'numeric' }) => (d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', opts) : '');
 const plural = (n, one, many = one + 's') => `${fmt(n)} ${n === 1 ? one : many}`;
 const KEYS = { user: 'radar.user.v1', filters: 'radar.filters.v1', prefs: 'radar.prefs.v1' };
@@ -290,6 +290,22 @@ function nlPaper(r, related = false) {
     ${r.ident ? `<p class="p-line${r.byModel ? '' : ' auto'}"><b>Identification</b>${esc(r.ident)}</p>` : ''}
     ${related && r.related?.length ? `<p class="small muted nl-rel"><b>Relates to</b> ${r.related.map(x => `<button type="button" class="link" ${S.byId?.has(x.id) ? `data-open="${esc(x.id)}"` : ''}>${esc(x.title)}</button> (${esc(x.journal)} ${esc(x.year)}${x.why.length ? ', shares ' + esc(x.why.join(', ')) : ''})`).join('; ')}</p>` : ''}</div>`;
 }
+function nlBars(issue, total) {
+  // The share of the week's papers using each method or data type, on the scale of the largest share.
+  const share = r => r.share ?? (total ? r.count / total : 0);
+  const groups = [['Identification', issue.ident], ['Other approaches', issue.methods], ['Data', issue.data || []]].filter(([, rows]) => rows?.length);
+  if (!groups.length) return '';
+  const top = Math.max(...groups.flatMap(([, rows]) => rows.map(share))) || 1;
+  return `<h3>Methods and data this week</h3><p class="small muted">Share of this week's papers using each (a paper can use several), and how many.</p>
+    ${groups.map(([title, rows]) => `<div class="nl-bars" role="list" aria-label="${title}"><b class="small">${title}</b>${rows.map(r => `<div class="nl-bar" role="listitem"><span>${esc(r.label)}</span><i><b style="width:${Math.max(1, Math.round(100 * share(r) / top))}%"></b></i><span class="num">${pct(share(r))} · ${r.count}</span></div>`).join('')}</div>`).join('')}`;
+}
+function nlAuthors(authors) {
+  if (!authors.length) return '';
+  return `<div class="table-wrap"><table class="nl-authors"><caption class="small"><b>Authors this week</b>, ranked</caption>
+    <thead><tr><th>#</th><th>Author</th><th class="num">This week</th><th class="num">Before</th><th>Latest paper already in the radar</th></tr></thead>
+    <tbody>${authors.map((a, i) => `<tr><td>${i + 1}</td><td>${esc(a.name)}</td><td class="num">${a.papers ?? 1}</td><td class="num">${a.before}</td>
+      <td>${a.last ? `<button type="button" class="link" ${S.byId?.has(a.last.id) ? `data-open="${esc(a.last.id)}"` : ''}>${esc(a.last.title)}</button> <span class="muted">${esc(a.last.journal)} · ${dayLabel(a.last.published)}</span>` : `<span class="muted">${a.before ? '' : 'New to the radar'}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
+}
 function newsletterHtml(issue) {
   const pick = nlFamilies();
   const head = `<div class="heading"><div><span class="eyebrow">Weekly newsletter</span><h1>${issue ? 'Week of ' + dayLabel(issue.date, { day: 'numeric', month: 'long', year: 'numeric' }) : 'The weekly issue'}</h1>
@@ -306,9 +322,7 @@ function newsletterHtml(issue) {
       <p><b>${fmt(c.total)} new papers</b>: ${fmt(c.journals)} in the journals and ${fmt(c.nber)} NBER working papers. The radar now holds ${fmt(c.corpus)} papers published since 2020.</p>
       ${issue.brief ? `<p class="nl-brief">${esc(issue.brief)}</p>` : ''}
       <h3>Highlights</h3>${issue.highlights.map(r => nlPaper(r)).join('')}
-      ${issue.ident.length || issue.methods.length ? `<h3>How this week's papers are identified and estimated</h3><ul class="nl-list">
-        ${issue.ident.length ? `<li><b>Identification</b> ${issue.ident.map(m => `${esc(m.label)} (${m.count})`).join(' · ')}</li>` : ''}
-        ${issue.methods.length ? `<li><b>Approaches</b> ${issue.methods.map(m => `${esc(m.label)} (${m.count})`).join(' · ')}</li>` : ''}</ul>` : ''}
+      ${nlBars(issue, c.total)}
       ${tr.methods.length || tr.topics.length || tr.data.length ? `<h3>Rising over the past three months</h3><p class="small muted">Share of papers published in the last 90 days, against the twelve months before.</p><ul class="nl-list">${trendRows('Methods', tr.methods)}${trendRows('Topics', tr.topics)}${trendRows('Data', tr.data)}</ul>` : ''}
     </section>
     <section class="panel nl-page"><span class="eyebrow">Page 2 · Your fields</span>
@@ -316,7 +330,7 @@ function newsletterHtml(issue) {
       <p class="small muted">${pick.length ? 'Showing the fields you picked (remembered on this device).' : 'Showing every field. Pick yours to keep page 2 to them.'}</p>
       ${shown.map(([k, f]) => `<div class="nl-fam"><h3><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">· ${f.count} new</span></h3>
         ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${f.papers.map(r => nlPaper(r, true)).join('')}
-        ${f.authors.length ? `<p class="small"><b>Active this week</b> ${f.authors.map(a => `${esc(a.name)} <span class="muted">(${a.before ? `${a.before} earlier in the radar` : 'new to the radar'})</span>`).join(' · ')}</p>` : ''}
+        ${nlAuthors(f.authors)}
         ${f.methods.length ? `<p class="small"><b>Methods</b> ${esc(f.methods.join(', '))}</p>` : ''}</div>`).join('')}
     </section></div>
     <aside>${subscribeHtml()}<p class="small muted" style="margin-top:12px">Summaries are written by a language model from abstracts and open-access conclusions; check the paper before citing it.</p></aside></div>`;
