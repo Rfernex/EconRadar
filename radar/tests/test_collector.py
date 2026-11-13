@@ -581,15 +581,20 @@ class Newsletter(unittest.TestCase):
             labour = issue['families']['labour']
             self.assertEqual(labour['papers'][0]['related'][0]['id'], 'OLD')
             self.assertIn('minimum wage', labour['papers'][0]['related'][0]['why'])
-            self.assertEqual(labour['authors'][0], {'name': 'Ada Lovelace', 'papers': 1, 'before': 2, 'last': {
-                'id': 'OLD', 'title': 'Minimum wages before', 'published': '2023-05-01', 'journal': 'AER'}}, 'with the latest earlier paper')
-            self.assertEqual([(m['key'], m['share']) for m in issue['ident']], [('did', 0.5), ('rct', 0.5)])
-            self.assertEqual({m['key'] for m in issue['ident']}, {'did', 'rct'})
+            self.assertEqual(labour['authors'][0], {'name': 'Ada Lovelace', 'papers': 1, 'before': 2, 'topics': ['minimum wage'], 'last': {
+                'id': 'OLD', 'title': 'Minimum wages before', 'published': '2023-05-01', 'journal': 'AER'}}, 'usual topics and latest earlier paper')
+            self.assertEqual([(x['key'], x['share'], x['slot']) for x in issue['mix']['ident']['parts']], [('did', 0.5, 1), ('rct', 0.5, 2)])
+            self.assertEqual(issue['mix']['ident']['papers'], 1)
+            self.assertEqual(labour['mix']['ident']['parts'][0]['slot'], 1, 'a method keeps its colour in the field sections')
             self.assertEqual([m['key'] for m in issue['methods']], ['structural'])
+            self.assertEqual(issue['families']['public']['methods'], [{'label': 'Structural estimation', 'count': 1}])
+            self.assertEqual(issue['families']['public']['authors'][0]['topics'], ['minimum wage'], 'earlier topics come first')
             body = nl.render(issue)
             self.assertIn("{% if 'labour' in subscriber.tags or not subscriber.tags %}", body)
             self.assertIn('## Page 2', body)
             self.assertIn('Latest paper already in the radar', body)
+            self.assertIn('Usual topics', body)
+            self.assertIn('border-spacing:2px 0', body, 'stacked bars')
             self.assertIn('width:100%;border-radius', body, 'the most used method fills the bar scale')
             self.assertNotIn("'history' in subscriber.tags", body, 'empty sections are left out')
             os_env = dict(__import__('os').environ); os_env.pop('BUTTONDOWN_API_KEY', None)
@@ -620,6 +625,7 @@ class Newsletter(unittest.TestCase):
             issue = nl.build(nl.Corpus(tmp, CONFIG), date(2026, 11, 12))
             public = issue['families']['public']
             self.assertEqual(public['authors'][0]['before'], 1, 'the same person under another id and spelling')
+            self.assertEqual(public['authors'][1]['topics'], ['health insurance'], 'an author new to the radar: this week\'s topics')
             self.assertEqual([r['id'] for r in public['papers'][0]['related']], ['OLD'], 'its own working paper is not "related"')
             self.assertEqual(issue['trends'], {'methods': [], 'topics': [], 'data': []}, 'no trends while older papers have rule tags only')
             self.assertEqual(issue['trendsCoverage'], 0.0)

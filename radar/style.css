@@ -205,6 +205,9 @@ dialog::backdrop{background:#0d16188a;backdrop-filter:blur(3px)}.dialog-close{di
 .nl-fam{margin-top:12px}.nl-fam h3 .dot{margin-right:6px}
 .nl-bars{display:grid;gap:4px;margin:10px 0}.nl-bar{display:grid;grid-template-columns:minmax(0,38%) 1fr auto;gap:10px;align-items:center;font-size:13px}
 .nl-bar i{display:block;height:10px}.nl-bar i b{display:block;height:100%;background:var(--seq-4);border-radius:0 4px 4px 0}.nl-bar .num{color:var(--text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}
+.nl-mix{margin:10px 0 4px}.nl-mix>p{margin:0 0 4px}.nl-stack{display:flex;gap:2px;height:14px}.nl-stack i{display:block;min-width:2px}
+.nl-stack i:first-child{border-radius:4px 0 0 4px}.nl-stack i:last-child{border-radius:0 4px 4px 0}
+.nl-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 0}.nl-legend .sq{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
 .nl-authors{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}.nl-authors caption{text-align:left;margin-bottom:4px}
 .nl-authors th{text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--line);padding:4px 8px 4px 0}
 .nl-authors td{border-bottom:1px solid var(--line-soft);padding:6px 8px 6px 0;vertical-align:top}.nl-authors .num{text-align:right;font-variant-numeric:tabular-nums}

@@ -290,21 +290,26 @@ function nlPaper(r, related = false) {
     ${r.ident ? `<p class="p-line${r.byModel ? '' : ' auto'}"><b>Identification</b>${esc(r.ident)}</p>` : ''}
     ${related && r.related?.length ? `<p class="small muted nl-rel"><b>Relates to</b> ${r.related.map(x => `<button type="button" class="link" ${S.byId?.has(x.id) ? `data-open="${esc(x.id)}"` : ''}>${esc(x.title)}</button> (${esc(x.journal)} ${esc(x.year)}${x.why.length ? ', shares ' + esc(x.why.join(', ')) : ''})`).join('; ')}</p>` : ''}</div>`;
 }
-function nlBars(issue, total) {
-  // The share of the week's papers using each method or data type, on the scale of the largest share.
-  const share = r => r.share ?? (total ? r.count / total : 0);
-  const groups = [['Identification', issue.ident], ['Other approaches', issue.methods], ['Data', issue.data || []]].filter(([, rows]) => rows?.length);
-  if (!groups.length) return '';
-  const top = Math.max(...groups.flatMap(([, rows]) => rows.map(share))) || 1;
-  return `<h3>Methods and data this week</h3><p class="small muted">Share of this week's papers using each (a paper can use several), and how many.</p>
-    ${groups.map(([title, rows]) => `<div class="nl-bars" role="list" aria-label="${title}"><b class="small">${title}</b>${rows.map(r => `<div class="nl-bar" role="listitem"><span>${esc(r.label)}</span><i><b style="width:${Math.max(1, Math.round(100 * share(r) / top))}%"></b></i><span class="num">${pct(share(r))} · ${r.count}</span></div>`).join('')}</div>`).join('')}`;
+const seriesVar = slot => (slot ? `var(--series-${slot})` : 'var(--series-other)');
+function nlMix(title, m) {
+  // One 100% bar per group: how the week's identification (or data) tags split; colours follow the key across the issue.
+  if (!m?.parts?.length) return '';
+  return `<div class="nl-mix"><p class="small"><b>${title}</b> <span class="muted">· ${fmt(m.papers)} paper${m.papers === 1 ? '' : 's'}</span></p>
+    <div class="nl-stack" role="img" aria-label="${esc(`${title}: ${m.parts.map(x => `${x.label} ${pct(x.share)}`).join(', ')}`)}">${m.parts.map(x => `<i style="flex:${x.share};background:${seriesVar(x.slot)}" data-tip="${esc(`<b>${x.label}</b><span>${pct(x.share)} of ${title.toLowerCase()} tags · ${x.count}</span>`)}"></i>`).join('')}</div>
+    <p class="nl-legend small">${m.parts.map(x => `<span><i class="sq" style="background:${seriesVar(x.slot)}"></i>${esc(x.label)} <span class="muted">${pct(x.share)}</span></span>`).join('')}</p></div>`;
+}
+function nlBars(rows, total) {
+  // Other approaches: the share of the week's papers using each, on the scale of the largest share.
+  if (!rows?.length) return '';
+  const share = r => r.share ?? (total ? r.count / total : 0), top = Math.max(...rows.map(share)) || 1;
+  return `<div class="nl-bars" role="list" aria-label="Other approaches"><b class="small">Other approaches</b>${rows.map(r => `<div class="nl-bar" role="listitem"><span>${esc(r.label)}</span><i><b style="width:${Math.max(1, Math.round(100 * share(r) / top))}%"></b></i><span class="num">${pct(share(r))} · ${r.count}</span></div>`).join('')}</div>`;
 }
 function nlAuthors(authors) {
   if (!authors.length) return '';
   return `<div class="table-wrap"><table class="nl-authors"><caption class="small"><b>Authors this week</b>, ranked</caption>
-    <thead><tr><th>#</th><th>Author</th><th class="num">This week</th><th class="num">Before</th><th>Latest paper already in the radar</th></tr></thead>
-    <tbody>${authors.map((a, i) => `<tr><td>${i + 1}</td><td>${esc(a.name)}</td><td class="num">${a.papers ?? 1}</td><td class="num">${a.before}</td>
-      <td>${a.last ? `<button type="button" class="link" ${S.byId?.has(a.last.id) ? `data-open="${esc(a.last.id)}"` : ''}>${esc(a.last.title)}</button> <span class="muted">${esc(a.last.journal)} · ${dayLabel(a.last.published)}</span>` : `<span class="muted">${a.before ? '' : 'New to the radar'}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
+    <thead><tr><th>#</th><th>Author</th><th class="num">This week</th><th>Usual topics</th><th>Latest paper already in the radar</th></tr></thead>
+    <tbody>${authors.map((a, i) => `<tr><td>${i + 1}</td><td>${esc(a.name)}</td><td class="num">${a.papers ?? 1}</td><td>${esc((a.topics || []).join(', ')) || '<span class="muted">–</span>'}</td>
+      <td>${a.last ? `<button type="button" class="link" ${S.byId?.has(a.last.id) ? `data-open="${esc(a.last.id)}"` : ''}>${esc(a.last.title)}</button> <span class="muted">${esc(a.last.journal)} · ${dayLabel(a.last.published)}</span>` : '<span class="muted">New to the radar</span>'}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function newsletterHtml(issue) {
   const pick = nlFamilies();
@@ -322,16 +327,18 @@ function newsletterHtml(issue) {
       <p><b>${fmt(c.total)} new papers</b>: ${fmt(c.journals)} in the journals and ${fmt(c.nber)} NBER working papers. The radar now holds ${fmt(c.corpus)} papers published since 2020.</p>
       ${issue.brief ? `<p class="nl-brief">${esc(issue.brief)}</p>` : ''}
       <h3>Highlights</h3>${issue.highlights.map(r => nlPaper(r)).join('')}
-      ${nlBars(issue, c.total)}
+      ${issue.mix || issue.methods.length ? `<h3>Methods and data this week</h3><p class="small muted">How the identification strategies and data types used this week split (a paper can use several), then the share of papers using each other approach.</p>
+        ${nlMix('Identification', issue.mix?.ident)}${nlMix('Data', issue.mix?.data)}${nlBars(issue.methods, c.total)}` : ''}
       ${tr.methods.length || tr.topics.length || tr.data.length ? `<h3>Rising over the past three months</h3><p class="small muted">Share of papers published in the last 90 days, against the twelve months before.</p><ul class="nl-list">${trendRows('Methods', tr.methods)}${trendRows('Topics', tr.topics)}${trendRows('Data', tr.data)}</ul>` : ''}
     </section>
     <section class="panel nl-page"><span class="eyebrow">Page 2 · Your fields</span>
       <div class="chips" role="group" aria-label="Fields shown on page 2">${fams.map(([k, f]) => `<button type="button" class="chip btnish" data-nl-fam="${k}" aria-pressed="${pick.includes(k)}"><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">${f.count}</span></button>`).join('')}</div>
       <p class="small muted">${pick.length ? 'Showing the fields you picked (remembered on this device).' : 'Showing every field. Pick yours to keep page 2 to them.'}</p>
       ${shown.map(([k, f]) => `<div class="nl-fam"><h3><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">· ${f.count} new</span></h3>
-        ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${f.papers.map(r => nlPaper(r, true)).join('')}
-        ${nlAuthors(f.authors)}
-        ${f.methods.length ? `<p class="small"><b>Methods</b> ${esc(f.methods.join(', '))}</p>` : ''}</div>`).join('')}
+        ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${nlMix('Identification', f.mix?.ident)}${nlMix('Data', f.mix?.data)}
+        ${f.methods.length ? `<p class="small"><b>Other approaches</b> ${f.methods.map(m => typeof m === 'string' ? esc(m) : `${esc(m.label)} <span class="muted">(${m.count})</span>`).join(', ')}</p>` : ''}
+        ${f.papers.map(r => nlPaper(r, true)).join('')}
+        ${nlAuthors(f.authors)}</div>`).join('')}
     </section></div>
     <aside>${subscribeHtml()}<p class="small muted" style="margin-top:12px">Summaries are written by a language model from abstracts and open-access conclusions; check the paper before citing it.</p></aside></div>`;
 }
