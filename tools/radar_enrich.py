@@ -202,14 +202,14 @@ def system_prompt(tax, vocabulary=()):
 Writing
 - question: the research question as one direct question of at most 30 words, ending with "?". Name the setting, population or mechanism when the paper does. A question, not a topic ("How does X affect Y among Z?").
 - contribution: what is new, in 1-2 sentences of at most 35 words, starting with a verb ("Provides the first causal estimate of ...", "Develops a model in which ..."). Name the specific novelty: the new data, setting, design, estimator or mechanism, and what it improves on when the text says so. Never vague phrases such as "sheds light on", "contributes to the literature" or "provides insights"; do not repeat the summary.
-- summary: 2-3 sentences: what the paper does, then its main findings. Give headline magnitudes with units and their comparison point when the text gives them ("raises employment by 4% relative to ..."). Do not start with "This paper" or restate the question.
+- summary: 2-3 sentences: what the paper does, then its main findings. Give headline magnitudes with units and their comparison point when the text gives them ("raises employment by 4% relative to ..."). Start with the finding or the setting, never with "This paper", "The paper", "We" or "The authors", and do not restate the question or copy the abstract's sentences.
 - conclusion: 1-2 sentences on the implications drawn in the conclusion excerpt; without an excerpt, the policy or theoretical implication stated in the abstract, or "" if there is none. Do not repeat the summary.
 - identification: at most 25 words. Empirical causal work: the design and the source of variation ("Staggered DiD exploiting the county-level rollout of X, 1995-2010"; "IV using rainfall shocks as instrument for income"). Structural or quantitative work: "Structural: " or "Quantitative: ", the model, and what it is estimated or calibrated on. Pure theory: "Theory: " and the type of model. Descriptive or measurement work: "Descriptive: " and what is measured. Econometric methods: "Econometric theory: " and the problem addressed.
 - data_detail: the main data sources named concretely (survey, registry, country, years) in at most 20 words; "" if none.
 
 Classifying (use only the keys listed below)
 - fields: 1-3 field keys, primary first, chosen by the economic question rather than the journal.
-- methods: 1-4 method keys the paper actually uses, research design first, then estimation or modelling.
+- methods: 1-4 method keys the paper actually uses, research design first, then estimation or modelling. Tag the design the text describes even when it does not name it: outcomes compared before and after a policy between affected and unaffected units is did (event-study when effects are traced period by period); a cutoff or threshold rule is rdd; an instrument or exogenous shifter of the treatment is iv.
   - theory: the main output is a model with formal results. Not for empirical papers that write a small model to motivate estimates.
   - structural: model parameters are estimated or calibrated on data and used for counterfactuals. Not for pure theory.
   - quant-macro: calibrated or estimated macro models (DSGE, HANK, growth, OLG, quantitative trade or spatial models). Use it instead of structural for macro models.
@@ -223,7 +223,7 @@ Classifying (use only the keys listed below)
 - period: the period the data cover, such as "1850-1910"; "" if not applicable.
 - jel: 1-4 JEL codes at the three-character level, such as "J31".
 
-Use only what the provided text supports; never infer results, magnitudes, data or designs it does not state. If only a title is available: summary is one sentence on what the title says the paper studies; contribution, conclusion, identification and data_detail are ""; methods and data_types only if the title names them; geography and period only if the title states them.
+Use only what the provided text supports; never invent results, magnitudes or data it does not state. If only a title is available: summary is one sentence on what the title says the paper studies; contribution, conclusion, identification and data_detail are ""; methods and data_types only if the title names them; geography and period only if the title states them.
 
 Field keys
 {fields}

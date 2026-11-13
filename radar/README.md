@@ -28,7 +28,7 @@ The corpus is every article published since January 2020 in 20 leading economics
 
 ### The weekly update
 
-A scheduled task in the Claude desktop app (**EconRadar weekly update**, Tuesdays at 08:30, after NBER's Monday release) follows [`tools/WEEKLY.md`](../tools/WEEKLY.md): collect, summarise the week's papers plus up to 100 from the backlog, build the newsletter, run the tests, push `radar/data`. It runs only while the Mac is awake and the app open (a missed run starts at the next launch). The GitHub workflow is kept for manual collection only.
+Two scheduled tasks in the Claude desktop app follow [`tools/WEEKLY.md`](../tools/WEEKLY.md), working in their own git worktree (`../econradar-routine`, made by `tools/radar_routine.py setup`) so they never touch uncommitted work in this checkout, and one at a time (a lock in `.radar-cache/`). **EconRadar weekly update** (Tuesdays, after NBER's Monday release) collects, summarises the week's papers, builds the newsletter draft, reports readers' flags and pushes `radar/data`. **EconRadar catch-up** summarises 250 backlog papers per run, four times a day, within at most 25% of the weekly plan allowance: `radar_routine.py budget` reads the app's usage meters and stops the run past that share (ledger in `.radar-cache/catchup-budget.json`), and it also skips runs when the 5-hour window is 75% full. Disable it once `radar_batch.py status` shows no papers left. Both run only while the Mac is awake and the app open. The GitHub workflow is kept for manual collection only.
 
 Summaries by hand (a catch-up, or the backlog):
 

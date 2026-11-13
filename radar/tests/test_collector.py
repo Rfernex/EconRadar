@@ -529,6 +529,36 @@ class Flags(unittest.TestCase):
             self.assertTrue(again['W1']['corrected'])
 
 
+class Routine(unittest.TestCase):
+    """Scheduled runs: the catch-up stays within its weekly share; worktrees share one cache."""
+
+    def test_catchup_budget_stops_at_its_weekly_share(self):
+        import radar_routine as rr
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(rr, 'LEDGER', Path(tmp) / 'ledger.json'), \
+                contextlib.redirect_stdout(io.StringIO()):
+            week, nxt = '2026-11-21T07:00:00Z', '2026-11-28T07:00:00Z'
+            self.assertEqual(rr.budget(40, 10, week), 0)
+            for _ in range(30):
+                rr.record(40, 40, week)  # the meter did not move: each run still counts RUN_FLOOR
+            self.assertEqual(rr.budget(40, 10, week), 0, 'a 31st run ends at 24.8%')
+            rr.record(40, 40, week)
+            self.assertEqual(rr.budget(40, 10, week), 2, 'a 32nd would pass 25%')
+            self.assertEqual(rr.budget(40, 10, nxt), 0, 'a new week starts from zero')
+            rr.record(50, 54, nxt)
+            self.assertEqual(json.loads((Path(tmp) / 'ledger.json').read_text())[nxt[:13]]['used'], 4.0)
+            self.assertEqual(rr.budget(96, 10, nxt), 2, 'never near the weekly limit')
+            self.assertEqual(rr.budget(50, 80, nxt), 2, 'leaves a busy 5-hour window alone')
+
+    def test_worktrees_share_the_main_checkout_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            main, wt = Path(tmp) / 'repo', Path(tmp) / 'routine'
+            (main / '.git' / 'worktrees' / 'routine').mkdir(parents=True)
+            wt.mkdir()
+            (wt / '.git').write_text(f"gitdir: {main / '.git' / 'worktrees' / 'routine'}\n")
+            self.assertEqual(cl.main_checkout(wt), main)
+            self.assertEqual(cl.main_checkout(main), main)
+
+
 class Newsletter(unittest.TestCase):
     def test_issue_pages_and_personalised_email(self):
         import newsletter as nl

@@ -555,7 +555,20 @@ def read_open_copy(urls, parser=None):
 # ---------------------------------------------------------------------------
 # Conclusions read from open-access copies wait here, on this machine only (never
 # published), until a Claude session summarises the paper (tools/radar_batch.py).
-CACHE = ROOT / '.radar-cache'
+def main_checkout(root):
+    """The repository's main folder, also when running from a linked git worktree (whose .git is
+    a file pointing to <main>/.git/worktrees/<name>), so every checkout shares one cache."""
+    git = root / '.git'
+    if git.is_file():
+        line = git.read_text().strip()
+        if line.startswith('gitdir:'):
+            target = Path(line.split(':', 1)[1].strip())
+            if target.parent.name == 'worktrees':
+                return target.parents[2]
+    return root
+
+
+CACHE = main_checkout(ROOT) / '.radar-cache'
 CONCLUSIONS = CACHE / 'conclusions.json'
 
 

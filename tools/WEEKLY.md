@@ -1,22 +1,40 @@
-# EconRadar weekly update (for the scheduled Claude session)
+# EconRadar scheduled runs (for the Claude sessions that run them)
 
-Run every Tuesday morning, after NBER's Monday-evening release. You are the model that writes
-the summaries: there is no API key. Work from the repository root:
-`/Users/rfernex/Documents/Personal/Utile/apps/repository`. Keep token use low: read each file once,
-do not re-read papers you already answered, and do not explore the code.
+You are the model that writes the summaries: there is no API key. Two scheduled tasks use this
+file: the **weekly update** (Tuesday morning, after NBER's Monday-evening release) and the
+**catch-up** (several times a day until the backlog is done). Keep token use low: read each file
+once, do not re-read papers you already answered, and do not explore the code.
 
-## 1. Collect
+Work in the routine's own checkout, never in the owner's:
 
 ```
-git pull --ff-only origin main
+cd /Users/rfernex/Documents/Personal/Utile/apps/econradar-routine
+```
+
+(If it does not exist: `cd /Users/rfernex/Documents/Personal/Utile/apps/repository && python3 tools/radar_routine.py setup`, then cd as above.)
+Every run starts with `begin` and ends with `end`, even when a step fails:
+
+```
+python3 tools/radar_routine.py begin --task weekly     # or --task catchup
+...
+python3 tools/radar_routine.py end
+```
+
+If `begin` prints BUSY, another run is going: stop, without running `end`. `begin` resets this
+checkout to origin/main; it holds nothing else.
+
+## Weekly update
+
+### 1. Collect
+
+```
 python3 tools/collect_literature.py --no-model
 python3 tools/collect_focus.py --model-budget 0
 ```
 
-If `git pull` fails because of local changes, stop and report: never stash, reset or commit
-other files. If OpenAlex refuses (daily allowance), continue with what was collected.
+If OpenAlex refuses (daily allowance), continue with what was collected.
 
-## 2. Summarise
+### 2. Summarise
 
 ```
 python3 tools/radar_batch.py status
@@ -35,11 +53,10 @@ python3 tools/radar_batch.py import --answers /tmp/econradar-answers.json
   string empty rather than guess; never invent a result.
 - `import` prints what it stored and what it rejected (with the reason). Fix rejected answers
   once by re-answering only those ids; if they fail again, move on.
-- Stop when `status` shows `addedThisWeek: 0`, then continue with the backlog for at most
-  **4 more batches** (100 papers). The backlog is summarised a little each week.
+- Stop when `status` shows `addedThisWeek: 0`. The backlog is the catch-up's job.
 - The Focus area (`--area basic-income`) is summarised only on request.
 
-## 3. Newsletter
+### 3. Newsletter
 
 ```
 python3 tools/newsletter.py build
@@ -56,12 +73,12 @@ Only for families with papers this week; only claims the issue's papers support.
 
 ```
 python3 tools/newsletter.py texts --texts /tmp/econradar-texts.json
-python3 tools/newsletter.py send      # creates a DRAFT in Buttondown; you review and send it from Buttondown
+python3 tools/newsletter.py send      # creates a DRAFT in Buttondown; the owner reviews and sends it
 ```
 
 If `send` says BUTTONDOWN_API_KEY is not set, skip it: the issue is still in the app.
 
-## 3b. Readers' flags (report only)
+### 3b. Readers' flags (report only)
 
 ```
 python3 tools/radar_flags.py list
@@ -69,29 +86,43 @@ python3 tools/radar_flags.py list
 
 For each open flag, write in your report: the flag id, the paper, the reader's note, and whether the note
 is right according to the abstract, with the correction you would make. **Change nothing**: the
-maintainer decides each flag later. If `ECONRADAR_FLAGS_CSV` is not set, skip this step.
+owner decides each flag later. If `ECONRADAR_FLAGS_CSV` is not set, skip this step.
 
-## 4. Publish
+### 4. Publish
 
 ```
 python3 -m unittest discover -s radar/tests
-git add radar/data
-git commit -m "EconRadar: weekly update $(date +%Y-%m-%d)"
-git push origin HEAD:main
+python3 tools/radar_routine.py publish -m "EconRadar: weekly update $(date +%Y-%m-%d)"
+python3 tools/radar_routine.py end
 ```
 
-Stage `radar/data` only, never other files. If tests fail, do not push: report the failure.
+If tests fail, do not publish: run `end` and report the failure.
 
-## 5. Report
+### 5. Report
 
-One short message: papers added (journals / NBER), summaries written and rejected, backlog
-left (`status`), newsletter draft created or skipped, open readers' flags (step 3b), and anything that failed.
+One short message: papers added (journals / NBER), summaries written and rejected, backlog left
+(`status`), newsletter draft created or skipped, open readers' flags (step 3b), and anything that failed.
 
-## Catch-up (the backlog, on request)
+## Catch-up (the backlog, 250 papers per run)
 
-To summarise a slice of the backlog in its own session ("summarise 500 EconRadar papers"):
-pull as in step 1, read the instructions once, run step 2's loop **20 times** (500 papers,
-newest published first; stop early if `export` writes 0 papers), then step 4 (tests, commit
-`radar/data` as "EconRadar: summaries for <n> more papers", push). Report summaries written,
-rejected, and what `status` says is left. Several such sessions can run one after another;
-not in parallel, since each one rewrites the same data files.
+The catch-up may use at most **25% of the weekly plan allowance**. The plan meters come from the
+Claude app's usage tool (`mcp__ccd_session_mgmt__get_usage`; load it with ToolSearch if needed):
+`Weekly · all models` percent and reset time, and the `5-hour limit` percent. If you cannot read
+them, do not summarise anything: report that and stop.
+
+1. `begin --task catchup` (above).
+2. Read the meters, then:
+   ```
+   python3 tools/radar_routine.py budget --weekly <weekly %> --five-hour <5-hour %> --resets <weekly resetsAt>
+   ```
+   If it prints STOP: run `end` and report its line. Nothing else.
+3. Read the instructions once (`radar_batch.py instructions`), then run the Weekly step 2 loop
+   **10 times** (250 papers, newest published first; stop early if `export` writes 0 papers).
+4. Tests, then `publish -m "EconRadar: summaries for <n> more papers"`.
+5. Read the weekly meter again, then record the run:
+   ```
+   python3 tools/radar_routine.py record --before <weekly % at step 2> --after <weekly % now> --resets <resetsAt> --papers <n>
+   ```
+6. `end`. Report in one line: summaries stored and rejected, `status` left, the budget line.
+
+Never run two catch-ups at once: they rewrite the same data files (`begin` enforces this).
