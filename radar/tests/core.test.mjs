@@ -43,11 +43,13 @@ test('cleanFilters rejects junk from storage', () => {
   assert.equal(C.activeFilterCount(f), 2);
 });
 
-test('firsts treat the first collection as the baseline', () => {
-  const seed = paper('W1', { added: '2026-11-01' });
-  const later = paper('W2', { added: '2026-11-05', fields: ['econ-history'], methods: ['did', 'synth'], data: ['admin'], topics: ['railways'] });
-  const map = C.firsts([later, seed]);
+test('firsts follow publication dates, with the corpus\'s first year as the baseline', () => {
+  const seed = paper('W1', { published: '2020-03-01' });
+  const early = paper('W3', { published: '2020-11-01', methods: ['rdd'] });
+  const later = paper('W2', { published: '2021-05-01', fields: ['econ-history'], methods: ['did', 'synth'], data: ['admin'], topics: ['railways'] });
+  const map = C.firsts([later, early, seed]);
   assert.equal(map.has('W1'), false);
+  assert.equal(map.has('W3'), false, 'still inside the baseline year');
   const kinds = map.get('W2').map(i => C.describeFirst(i, ctx));
   assert.ok(kinds.includes('First Difference-in-differences in Economic history'));
   assert.ok(kinds.includes('First Synthetic control paper in the radar'));
@@ -74,6 +76,24 @@ test('paper graph links papers that share authors and topics', () => {
   const ends = g.links.map(l => [l.source, l.target].sort().join());
   assert.ok(ends.includes('W1,W2'));
   assert.ok(!ends.some(e => e.includes('W3')));
+});
+
+test('paper ties can be restricted to one kind of match, and say what is shared', () => {
+  const list = [
+    paper('P1', { topics: ['minimum wage'], methods: ['did'], authors: [{ n: 'A', id: 'A1' }] }),
+    paper('P2', { topics: ['minimum wage'], methods: ['rdd'], authors: [{ n: 'B', id: 'B1' }] }),
+    paper('P3', { topics: ['trade'], fields: ['international'], methods: ['did'], authors: [{ n: 'C', id: 'C1' }] }),
+    paper('P4', { topics: ['inflation'], fields: ['macro'], methods: ['structural'], authors: [{ n: 'A', id: 'A1' }] }),
+  ];
+  const ends = match => C.paperGraph(list, ctx, { match }).links.map(l => [l.source, l.target].sort().join());
+  assert.ok(ends('topic').includes('P1,P2') && !ends('topic').includes('P1,P3'));
+  assert.ok(ends('ident').includes('P1,P3') && !ends('ident').includes('P1,P2'));
+  assert.deepEqual(ends('author'), ['P1,P4']);
+  const tie = C.paperGraph(list, ctx, { match: 'topic' }).links.find(l => [l.source, l.target].sort().join() === 'P1,P2');
+  assert.ok(C.describeShared(tie.why, ctx).includes('minimum wage'));
+  const byAuthor = C.paperGraph(list, ctx, { match: 'author' }).links[0];
+  assert.deepEqual(C.describeShared(byAuthor.why, ctx, [list[0], list[3]]), ['A']);
+  assert.equal(C.normalizePaper({ id: 'X', title: 'T', doi: '10.1/x' }, ctx).url, 'https://doi.org/10.1/x');
 });
 
 test('author graph and index tie authors to fields and co-authors', () => {
@@ -125,11 +145,11 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['literature-radar-v3', 'reading-room-v26', 'econradar-v4'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v5', 'reading-room-v26', 'econradar-v6'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
-  assert.deepEqual(deleted, ['literature-radar-v3'], 'caches from before the rename are retired too');
+  assert.deepEqual(deleted, ['econradar-v5']);
   let response; handlers.fetch({ request: { url: 'https://example.org/Apps/radar/data/index.json', method: 'GET', mode: 'cors' }, respondWith: r => { response = r; } });
   assert.equal(await response, 'cached');
 });

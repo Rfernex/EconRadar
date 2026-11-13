@@ -195,3 +195,14 @@ dialog::backdrop{background:#0d16188a;backdrop-filter:blur(3px)}.dialog-close{di
  .focus-filters:not(.open) .filter-row{display:none}
  .heat th.row{max-width:150px}
 }
+.tie-list .shared{display:block;font-weight:400;font-size:11px;margin-top:2px}
+/* Newsletter */
+.nl-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}.nl-layout>div{display:grid;gap:18px}
+.nl-page h3{margin:20px 0 8px}.nl-page .chips{margin:8px 0}
+.nl-paper{padding:12px 0;border-top:1px solid var(--line-soft);display:grid;gap:4px}.nl-paper>button.link{all:unset;cursor:pointer;font-weight:600;color:var(--ink)}.nl-paper>button.link:hover{text-decoration:underline}
+.nl-paper small{color:var(--text-secondary)}.nl-rel button.link{all:unset;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.nl-brief{font-family:var(--serif,Georgia,serif);font-size:15px;line-height:1.55}.nl-list{margin:0;padding-left:18px;display:grid;gap:6px}
+.nl-fam{margin-top:12px}.nl-fam h3 .dot{margin-right:6px}
+.subscribe{position:sticky;top:16px}.sub-form{display:grid;gap:10px;margin-top:10px}.sub-form input[type=email]{width:100%}
+.sub-form fieldset{border:0;margin:0;padding:0}.sub-fams{display:grid;gap:2px;margin-top:4px}
+@media (max-width:1100px){.nl-layout{grid-template-columns:minmax(0,1fr)}.subscribe{position:static}}

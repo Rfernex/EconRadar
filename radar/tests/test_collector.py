@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest import mock
 
@@ -81,19 +82,38 @@ class Collector(unittest.TestCase):
             store.add({'id': 'W1', 'doi': 'd1', 'added': '2026-10-02', 'published': '2026-10-01', 'title': 'A', 'topics': ['x'], 'by': 'rules'})
             store.save({'at': '2026-10-02T05:00:00+00:00', 'added': 1})
             store = cl.Store(Path(tmp))
-            store.add({'id': 'W2', 'doi': 'd2', 'added': '2026-11-12', 'published': '2026-11-01', 'title': 'B', 'topics': ['x', 'y'], 'by': 'rules'})
+            store.add({'id': 'W2', 'doi': 'd2', 'added': '2026-11-12', 'published': '2025-11-01', 'title': 'B', 'topics': ['x', 'y'], 'by': 'rules', 'abstract': 'We study y.', 'url': 'https://doi.org/d2'})
             old = next(p for _, p in store.papers() if p['id'] == 'W1')
             old['by'] = 'claude-opus-5-5'
             store.touch(old)
             store.save({'at': '2026-11-12T05:00:00+00:00', 'added': 1})
             index = json.loads((Path(tmp) / 'index.json').read_text())
             self.assertEqual(index['total'], 2)
-            self.assertEqual([s['month'] for s in index['shards']], ['2026-11', '2026-10'])
+            self.assertEqual([s['year'] for s in index['shards']], ['2026', '2025'], 'one file per publication year')
+            shard = json.loads((Path(tmp) / 'papers-2025.json').read_text())['papers'][0]
+            self.assertNotIn('abstract', shard, 'abstracts have their own file')
+            self.assertNotIn('url', shard, 'a DOI link is rebuilt from the DOI')
+            self.assertEqual(json.loads((Path(tmp) / 'abstracts-2025.json').read_text()), {'W2': 'We study y.'})
             self.assertEqual(len(index['runs']), 2)
             reread = cl.Store(Path(tmp))
             self.assertEqual(reread.known()[0], {'W1', 'W2'})
             self.assertEqual(next(p for _, p in reread.papers() if p['id'] == 'W1')['by'], 'claude-opus-5-5')
             self.assertEqual(reread.top_topics(), ['x', 'y'])
+            self.assertEqual(next(p for _, p in reread.papers() if p['id'] == 'W2')['abstract'], 'We study y.')
+            self.assertEqual(reread.remove(lambda p: p['id'] != 'W1'), 1)
+
+    def test_store_rewrites_month_files_by_year(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'papers-2026-11.json').write_text(json.dumps({'papers': [
+                {'id': 'W1', 'added': '2026-11-12', 'published': '2024-03-01', 'abstract': 'A.'},
+                {'id': 'W2', 'added': '2026-11-12', 'published': '2026-10-01', 'abstract': 'B.'}]}))
+            (root / 'index.json').write_text(json.dumps({'version': 1, 'shards': [{'month': '2026-11', 'file': 'papers-2026-11.json', 'count': 2}], 'runs': [{'at': 'x'}]}))
+            store = cl.Store(root)
+            self.assertTrue(store.dirty)
+            store.save()
+            self.assertEqual(sorted(f.name for f in root.glob('*.json')), ['abstracts-2024.json', 'abstracts-2026.json', 'index.json', 'papers-2024.json', 'papers-2026.json'])
+            self.assertEqual(json.loads((root / 'index.json').read_text())['runs'], [{'at': 'x'}])
 
     def test_trickling_download_hits_the_deadline(self):
         import socket
@@ -428,3 +448,65 @@ class OpenRouter(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Batch(unittest.TestCase):
+    """Summaries written by a Claude session: export a batch, import the answers."""
+
+    def test_export_then_import_checks_answers_against_the_taxonomy(self):
+        import radar_batch as rb
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            store.add({'id': 'W1', 'journal': 'aer', 'title': 'Minimum Wages', 'published': '2026-10-01', 'added': '2026-11-10',
+                       'authors': [{'n': 'Ada Lovelace'}], 'abstract': 'We study wages.', 'by': 'rules', 'topics': ['wages']})
+            store.add({'id': 'W2', 'journal': 'qje', 'title': 'Old', 'published': '2021-01-01', 'added': '2026-11-01',
+                       'authors': [{'n': 'X'}], 'abstract': 'Old paper.', 'by': 'claude-sonnet-5-5'})
+            store.save()
+            target = rb.Target(tmp)
+            text = rb.export(target, TAX, 10, {'W1': 'We conclude that wages rose.'})
+            self.assertEqual(text.count('### '), 1, 'papers with a model summary are not exported')
+            self.assertIn('### W1\nJournal: American Economic Review', text)
+            self.assertIn('Conclusion excerpt', text)
+            good = {'question': 'Do minimum wages cut jobs?', 'contribution': 'C.', 'summary': 'S.', 'conclusion': '', 'fields': ['labour', 'astrology'],
+                    'methods': ['did'], 'identification': 'State borders.', 'data_types': ['admin'], 'data_detail': '', 'topics': [],
+                    'geography': ['United States'], 'period': '', 'jel': ['J38']}
+            done, rejected, unknown = rb.import_answers(target, TAX, {'W1': good, 'W2': {'summary': ''}, 'W9': good}, 'claude-sonnet-5-5', {})
+            self.assertEqual((done, list(rejected), unknown), (['W1'], ['W2'], ['W9']))
+            again = {p['id']: p for _, p in cl.Store(Path(tmp)).papers()}
+            self.assertEqual((again['W1']['by'], again['W1']['fields'], again['W1']['topics']), ('claude-sonnet-5-5', ['labour'], ['wages']))
+            self.assertEqual(rb.Target(tmp).pending(), [])
+            self.assertIn('HOW TO ANSWER', rb.instructions(TAX, ['wages']))
+
+
+class Newsletter(unittest.TestCase):
+    def test_issue_pages_and_personalised_email(self):
+        import newsletter as nl
+        from datetime import date
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            base = {'authors': [{'n': 'Ada Lovelace', 'id': 'A1'}], 'abstract': 'x', 'by': 'claude-sonnet-5-5'}
+            store.add({**base, 'id': 'OLD', 'journal': 'aer', 'title': 'Minimum wages before', 'published': '2023-05-01', 'added': '2026-11-01',
+                       'fields': ['labour'], 'methods': ['did'], 'topics': ['minimum wage']})
+            store.add({**base, 'id': 'NEW', 'journal': 'qje', 'title': 'Minimum wages now', 'published': '2026-11-02', 'added': '2026-11-10',
+                       'fields': ['labour'], 'methods': ['did', 'rct'], 'topics': ['minimum wage'], 'contribution': 'Shows X.', 'ident': 'Borders.'})
+            store.add({**base, 'id': 'NB', 'journal': 'nber', 'title': 'A tax paper', 'published': '2026-11-09', 'added': '2026-11-11',
+                       'fields': ['public'], 'methods': ['structural'], 'topics': ['wealth tax']})
+            store.add({**base, 'id': 'BACK', 'journal': 'aer', 'title': 'Backfilled', 'published': '2021-01-01', 'added': '2026-11-11', 'fields': ['labour']})
+            store.save()
+            corpus = nl.Corpus(tmp, CONFIG)
+            issue = nl.build(corpus, date(2026, 11, 12))
+            self.assertEqual(issue['counts']['total'], 2, 'old papers added by a backfill are not news')
+            self.assertEqual([h['id'] for h in issue['highlights']], ['NEW', 'NB'], 'journals before NBER')
+            labour = issue['families']['labour']
+            self.assertEqual(labour['papers'][0]['related'][0]['id'], 'OLD')
+            self.assertIn('minimum wage', labour['papers'][0]['related'][0]['why'])
+            self.assertEqual(labour['authors'][0], {'name': 'Ada Lovelace', 'papers': 1, 'before': 2})
+            self.assertEqual({m['key'] for m in issue['ident']}, {'did', 'rct'})
+            self.assertEqual([m['key'] for m in issue['methods']], ['structural'])
+            body = nl.render(issue)
+            self.assertIn("{% if 'labour' in subscriber.tags or not subscriber.tags %}", body)
+            self.assertIn('## Page 2', body)
+            self.assertNotIn("'history' in subscriber.tags", body, 'empty sections are left out')
+            os_env = dict(__import__('os').environ); os_env.pop('BUTTONDOWN_API_KEY', None)
+            with unittest.mock.patch.dict('os.environ', os_env, clear=True), self.assertRaises(SystemExit):
+                nl.send(issue)

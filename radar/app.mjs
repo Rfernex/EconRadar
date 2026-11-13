@@ -1,4 +1,4 @@
-import * as C from './core.mjs?v=2';
+import * as C from './core.mjs?v=4';
 import { createNetwork } from './graph.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
@@ -20,20 +20,21 @@ const ICONS = {
   authors: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.4 3-5.2 5.5-5.2s4.7 1.8 5.5 5.2"/><circle cx="17" cy="9" r="2.4"/><path d="M15.6 13.9c2.4-.3 4.2 1.2 4.9 4.1"/>',
   trends: '<path d="M4 19V5M4 19h16"/><path d="M7 15l4-4 3 3 5-6"/>',
   sources: '<path d="M5 5.5C5 4.7 5.7 4 6.5 4H18v14H6.5C5.7 18 5 18.7 5 19.5zM5 19.5c0 .8.7 1.5 1.5 1.5H18"/><path d="M9 8h6M9 11h4"/>',
+  newsletter: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>',
   focus: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
 };
-const BASE_VIEWS = [['latest', 'Latest'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['sources', 'Sources']];
+const BASE_VIEWS = [['latest', 'Latest'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['newsletter', 'Newsletter'], ['sources', 'Sources']];
 // The Focus tab (radar/focus.json) is personal: it shows only on devices where it was switched
 // on, by opening the app once at #focus. Nothing else in the app links to it.
 const FOCUS_KEY = 'radar.focus.v1';
 const focusOn = () => local.get(FOCUS_KEY, false) === true;
-const views = () => (focusOn() ? [...BASE_VIEWS.slice(0, 4), ['focus', 'Focus'], BASE_VIEWS[4]] : BASE_VIEWS);
+const views = () => (focusOn() ? [...BASE_VIEWS.slice(0, 4), ['focus', 'Focus'], ...BASE_VIEWS.slice(4)] : BASE_VIEWS);
 let focusModule = null;
 
 const S = {
   ctx: null, config: null, index: { shards: [], runs: [] }, papers: [], visible: [], firsts: new Map(), allAuthors: new Map(),
   user: C.cleanUser(local.get(KEYS.user, {})), filters: C.cleanFilters(local.get(KEYS.filters, {})),
-  prefs: Object.assign({ sort: 'added', lens: 'strands', highlight: 'auto', kinds: { field: true, method: true, data: true, topic: true }, minEdge: 2, maxTopics: 45, maxPapers: 400, minAuthorPapers: 0, trendFacet: 'methods', trendBy: 'quarter', trendScope: '', authorSort: 'papers' }, local.get(KEYS.prefs, {})),
+  prefs: Object.assign({ sort: 'published', match: 'all', lens: 'strands', highlight: 'auto', kinds: { field: true, method: true, data: true, topic: true }, minEdge: 2, maxTopics: 45, maxPapers: 400, minAuthorPapers: 0, trendFacet: 'methods', trendBy: 'quarter', trendScope: '', authorSort: 'papers' }, local.get(KEYS.prefs, {})),
   today: C.isoDay(Date.now()), lastRun: '', prevVisit: '', view: 'latest', arg: '', limit: 30, network: null, net: {}, playing: 0,
 };
 const saveUser = () => local.set(KEYS.user, S.user);
@@ -66,18 +67,43 @@ function download(name, text, type = 'text/plain') {
 // ---- loading ------------------------------------------------------------------------
 async function getJSON(url) { const r = await fetch(url, { cache: 'no-cache' }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); }
 
+// Papers come one file per publication year (data/papers-YYYY.json): the newest year is
+// loaded first so the app opens fast, the older years follow in the background, and each
+// year's abstracts (data/abstracts-YYYY.json) only when a paper of that year is opened.
 async function load() {
   S.config = await getJSON('config.json');
   S.ctx = C.createContext(S.config);
   try { S.index = await getJSON('data/index.json'); } catch { S.index = { shards: [], runs: [] }; }
-  const shards = await Promise.all((S.index.shards || []).map(s => getJSON('data/' + s.file).catch(() => null)));
-  S.papers = C.mergeShards(shards.filter(Boolean), S.ctx);
+  const shards = S.index.shards || [];
+  S.shardData = [];
+  if (shards.length) S.shardData.push(await getJSON('data/' + shards[0].file).catch(() => null));
+  absorb();
   S.lastRun = (S.index.runs?.[0]?.at || '').slice(0, 10) || S.papers[0]?.added || '';
-  S.firsts = C.firsts(S.papers);
-  S.allAuthors = C.authorIndex(S.papers);
   S.prevVisit = S.user.lastVisit;
   S.user.lastVisit = S.today;
   saveUser();
+  S.loadingRest = shards.length > 1 ? Promise.all(shards.slice(1).map(s => getJSON('data/' + s.file).catch(() => null))).then(rest => {
+    S.shardData.push(...rest);
+    absorb();
+    S.loadingRest = null;
+    refresh({ keepNetwork: S.view === 'network' });
+    sideStatus();
+  }) : null;
+}
+function absorb() {
+  S.papers = C.mergeShards(S.shardData.filter(Boolean), S.ctx);
+  S.byId = new Map(S.papers.map(p => [p.id, p]));
+  S.firsts = C.firsts(S.papers);
+  S.allAuthors = C.authorIndex(S.papers);
+}
+const abstractsLoaded = new Map();
+function loadAbstracts(year) {
+  const shard = (S.index.shards || []).find(s => s.year === year && s.abstracts);
+  if (!shard) return Promise.resolve();
+  if (!abstractsLoaded.has(year)) abstractsLoaded.set(year, getJSON('data/' + shard.abstracts).then(map => {
+    for (const p of S.papers) if (map[p.id] && !p.abstract) C.setAbstract(p, map[p.id]);
+  }).catch(() => abstractsLoaded.delete(year)));
+  return abstractsLoaded.get(year);
 }
 
 function topCount() {
@@ -200,11 +226,13 @@ function route() {
   if (view === 'focus' && !focusOn()) { local.set(FOCUS_KEY, true); renderNav(); }
   S.view = views().some(([k]) => k === view) || view === 'author' ? view : 'latest';
   S.arg = decodeURIComponent(rest.join('/'));
+  // #paper/<id> (links in the newsletter): the latest papers, with that paper open.
+  if (view === 'paper' && S.arg) { const id = S.arg; S.arg = ''; setTimeout(() => openPaperWhenLoaded(id), 0); }
   if (S.view !== 'network' && S.network) { S.network.destroy(); S.network = null; stopPlay(); }
   if (S.view !== 'focus') { focusModule?.leave(); topCount(); }
   for (const a of $$('.nav-link')) a.classList.toggle('active', a.dataset.view === (S.view === 'author' ? 'authors' : S.view));
-  $('#crumb').textContent = { latest: 'LATEST PAPERS', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
-  $('#filter-bar').hidden = $('#filter-toggle').hidden = S.view === 'sources' || S.view === 'focus';
+  $('#crumb').textContent = { latest: 'LATEST PAPERS', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', newsletter: 'WEEKLY NEWSLETTER', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
+  $('#filter-bar').hidden = $('#filter-toggle').hidden = ['sources', 'focus', 'newsletter'].includes(S.view);
   render();
   $('#main').focus({ preventScroll: true });
   window.scrollTo(0, 0);
@@ -213,6 +241,7 @@ function render(keepNetwork = false) {
   hideTip();
   const main = $('#main');
   if (S.view === 'focus') return renderFocus();
+  if (S.view === 'newsletter') return renderNewsletter();
   if (!S.papers.length && S.view !== 'sources') { main.innerHTML = emptyRadar(); return; }
   if (S.view === 'latest') main.innerHTML = latestHtml();
   else if (S.view === 'network') renderNetwork(keepNetwork);
@@ -221,8 +250,80 @@ function render(keepNetwork = false) {
   else if (S.view === 'trends') main.innerHTML = trendsHtml();
   else if (S.view === 'sources') main.innerHTML = sourcesHtml();
 }
+async function openPaperWhenLoaded(id) {
+  if (!S.byId?.has(id) && S.loadingRest) await S.loadingRest;
+  if (S.byId?.has(id)) openPaper(id); else toast('That paper is not in the radar.');
+}
+
+// ---- Newsletter ------------------------------------------------------------------------
+// Issues are built each week by tools/newsletter.py (data/newsletter/<date>.json). Page 2
+// shows the field families a reader picks here (remembered on this device); subscribing
+// sends the same choice to Buttondown as tags, so the email carries those sections.
+const NL = { list: null, issues: new Map() };
+async function renderNewsletter() {
+  const main = $('#main');
+  try {
+    NL.list ||= (await getJSON('data/newsletter/index.json')).issues || [];
+    const day = NL.list.includes(S.arg) ? S.arg : NL.list[0];
+    if (day && !NL.issues.has(day)) NL.issues.set(day, await getJSON(`data/newsletter/${day}.json`));
+    if (S.view !== 'newsletter') return;
+    main.innerHTML = newsletterHtml(day ? NL.issues.get(day) : null);
+  } catch { NL.list = []; main.innerHTML = newsletterHtml(null); }
+}
+function subscribeHtml() {
+  const user = S.config.newsletter?.buttondown;
+  const fams = S.config.families.map(f => `<label class="pick-opt"><input type="checkbox" name="tag" value="${esc(f.key)}" ${nlFamilies().includes(f.key) ? 'checked' : ''}><i class="dot" style="background:${famVar(f.key)}"></i><span>${esc(f.label)}</span></label>`).join('');
+  return `<div class="panel subscribe"><span class="eyebrow">Subscribe</span><h3>Two pages every week, after the update</h3>
+    <p class="small muted">Page 1: what the week added, highlights, the methods and identification strategies in use, three-month trends. Page 2: the fields you pick, with each paper's contribution and how it relates to earlier work in the radar.</p>
+    ${user ? `<form action="https://buttondown.com/api/emails/embed-subscribe/${esc(user)}" method="post" target="_blank" class="sub-form">
+      <input type="email" name="email" required placeholder="you@university.edu" aria-label="Email address" autocomplete="email">
+      <fieldset><legend class="small muted">Your fields (page 2)</legend><div class="sub-fams">${fams}</div></fieldset>
+      <button type="submit" class="btn">Subscribe</button><p class="small muted">You will get a confirmation email. Unsubscribe or change fields from any issue.</p></form>`
+    : '<p class="small muted"><b>Subscriptions open soon.</b> Meanwhile, every issue is here.</p>'}</div>`;
+}
+const nlFamilies = () => (Array.isArray(S.prefs.nlFamilies) ? S.prefs.nlFamilies.filter(k => S.ctx.families.has(k)) : []);
+function nlPaper(r, related = false) {
+  const inRadar = S.byId?.has(r.id);
+  return `<div class="nl-paper"><button type="button" class="link" ${inRadar ? `data-open="${esc(r.id)}"` : ''}>${esc(r.title)}</button>
+    <small>${esc(r.journalName || r.journal)} · ${esc(r.authors.join(', '))}${r.moreAuthors ? ` +${r.moreAuthors}` : ''}${r.published ? ' · ' + dayLabel(r.published) : ''}</small>
+    ${r.contribution ? `<p class="p-line${r.byModel ? '' : ' auto'}"><b>Contribution</b>${esc(r.contribution)}</p>` : r.q ? `<p class="p-line auto"><b>Question</b>${esc(r.q)}</p>` : ''}
+    ${r.ident ? `<p class="p-line${r.byModel ? '' : ' auto'}"><b>Identification</b>${esc(r.ident)}</p>` : ''}
+    ${related && r.related?.length ? `<p class="small muted nl-rel"><b>Relates to</b> ${r.related.map(x => `<button type="button" class="link" ${S.byId?.has(x.id) ? `data-open="${esc(x.id)}"` : ''}>${esc(x.title)}</button> (${esc(x.journal)} ${esc(x.year)}${x.why.length ? ', shares ' + esc(x.why.join(', ')) : ''})`).join('; ')}</p>` : ''}</div>`;
+}
+function newsletterHtml(issue) {
+  const pick = nlFamilies();
+  const head = `<div class="heading"><div><span class="eyebrow">Weekly newsletter</span><h1>${issue ? 'Week of ' + dayLabel(issue.date, { day: 'numeric', month: 'long', year: 'numeric' }) : 'The weekly issue'}</h1>
+    <p>Each week, after the update, a two-page recap of what EconRadar added. Read it here or get it by email.</p></div>
+    ${NL.list?.length > 1 ? `<select id="nl-issue" aria-label="Issue">${NL.list.map(d => `<option value="${d}" ${issue?.date === d ? 'selected' : ''}>${dayLabel(d)}</option>`).join('')}</select>` : ''}</div>`;
+  if (!issue) return `${head}<div class="grid-2"><div class="empty"><h2>No issue yet</h2><p>The first issue comes out after the next weekly update.</p></div>${subscribeHtml()}</div>`;
+  const c = issue.counts, tr = issue.trends;
+  const trendRows = (name, rows) => rows?.length ? `<li><b>${name}</b> ${rows.slice(0, 4).map(r => `${esc(r.label)} <span class="muted">${pct(r.before)} → ${pct(r.recent)}</span>`).join(' · ')}</li>` : '';
+  const fams = Object.entries(issue.families).filter(([, f]) => f.count);
+  const shown = fams.filter(([k]) => !pick.length || pick.includes(k));
+  return `${head}
+    <div class="nl-layout"><div>
+    <section class="panel nl-page"><span class="eyebrow">Page 1 · The week in economics research</span>
+      <p><b>${fmt(c.total)} new papers</b>: ${fmt(c.journals)} in the journals and ${fmt(c.nber)} NBER working papers. The radar now holds ${fmt(c.corpus)} papers published since 2020.</p>
+      ${issue.brief ? `<p class="nl-brief">${esc(issue.brief)}</p>` : ''}
+      <h3>Highlights</h3>${issue.highlights.map(r => nlPaper(r)).join('')}
+      ${issue.ident.length || issue.methods.length ? `<h3>How this week's papers are identified and estimated</h3><ul class="nl-list">
+        ${issue.ident.length ? `<li><b>Identification</b> ${issue.ident.map(m => `${esc(m.label)} (${m.count})`).join(' · ')}</li>` : ''}
+        ${issue.methods.length ? `<li><b>Approaches</b> ${issue.methods.map(m => `${esc(m.label)} (${m.count})`).join(' · ')}</li>` : ''}</ul>` : ''}
+      ${tr.methods.length || tr.topics.length || tr.data.length ? `<h3>Rising over the past three months</h3><p class="small muted">Share of papers published in the last 90 days, against the twelve months before.</p><ul class="nl-list">${trendRows('Methods', tr.methods)}${trendRows('Topics', tr.topics)}${trendRows('Data', tr.data)}</ul>` : ''}
+    </section>
+    <section class="panel nl-page"><span class="eyebrow">Page 2 · Your fields</span>
+      <div class="chips" role="group" aria-label="Fields shown on page 2">${fams.map(([k, f]) => `<button type="button" class="chip btnish" data-nl-fam="${k}" aria-pressed="${pick.includes(k)}"><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">${f.count}</span></button>`).join('')}</div>
+      <p class="small muted">${pick.length ? 'Showing the fields you picked (remembered on this device).' : 'Showing every field. Pick yours to keep page 2 to them.'}</p>
+      ${shown.map(([k, f]) => `<div class="nl-fam"><h3><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">· ${f.count} new</span></h3>
+        ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${f.papers.map(r => nlPaper(r, true)).join('')}
+        ${f.authors.length ? `<p class="small"><b>Active this week</b> ${f.authors.map(a => `${esc(a.name)} <span class="muted">(${a.before ? `${a.before} earlier in the radar` : 'new to the radar'})</span>`).join(' · ')}</p>` : ''}
+        ${f.methods.length ? `<p class="small"><b>Methods</b> ${esc(f.methods.join(', '))}</p>` : ''}</div>`).join('')}
+    </section></div>
+    <aside>${subscribeHtml()}<p class="small muted" style="margin-top:12px">Summaries are written by a language model from abstracts and open-access conclusions; check the paper before citing it.</p></aside></div>`;
+}
+
 async function renderFocus() {
-  try { focusModule ||= await import('./focus.mjs?v=1'); }
+  try { focusModule ||= await import('./focus.mjs?v=3'); }
   catch (e) { $('#main').innerHTML = `<div class="empty"><h2>The Focus tab could not load</h2><p>${esc(e.message)}</p></div>`; return; }
   if (S.view !== 'focus') return;
   focusModule.show($('#main'), { S, C, $, $$, esc, fmt, pct, plural, dayLabel, toast, download, showTip, hideTip, getJSON, local, renderNav, createNetwork });
@@ -336,8 +437,10 @@ function related(p, n = 5) {
   return S.papers.filter(q => q.id !== p.id).map(q => [q, score(q)]).filter(([, s]) => s >= 2.5).sort((a, b) => b[1] - a[1]).slice(0, n).map(([q]) => q);
 }
 function openPaper(id) {
-  const p = S.papers.find(x => x.id === id);
+  const p = S.byId?.get(id) || S.papers.find(x => x.id === id);
   if (!p) return;
+  const year = (p.published || p.added).slice(0, 4);
+  if (!p.abstract && !abstractsLoaded.has(year)) { loadAbstracts(year).then(() => { if ($('#dialog').open) openPaper(id); }); }
   const saved = !!S.user.saved[p.id], read = !!S.user.read[p.id];
   const row = (label, value) => (value ? `<dt>${label}</dt><dd>${value}</dd>` : '');
   const firsts = (S.firsts.get(p.id) || []).map(i => `<span class="chip first">✦ ${esc(C.describeFirst(i, S.ctx))}</span>`).join('');
@@ -369,11 +472,12 @@ function openPaper(id) {
 
 // ---- shared click handling -------------------------------------------------------------
 function onMainClick(e) {
-  const t = e.target.closest('[data-act],[data-open],[data-select],[data-goto]');
+  const t = e.target.closest('[data-act],[data-open],[data-select],[data-goto],[data-nl-fam]');
   if (!t) return;
   if (t.dataset.open) return openPaper(t.dataset.open);
   if (t.dataset.select) return selectNode(t.dataset.select, true);
   if (t.dataset.goto) { location.hash = t.dataset.goto; return; }
+  if (t.dataset.nlFam) { const list = nlFamilies(), k = t.dataset.nlFam; S.prefs.nlFamilies = list.includes(k) ? list.filter(x => x !== k) : [...list, k]; savePrefs(); renderNewsletter(); return; }
   const card = t.closest('[data-id]'), id = card?.dataset.id, act = t.dataset.act;
   if (act === 'open') openPaper(id);
   else if (act === 'save' || act === 'read') {
@@ -401,7 +505,7 @@ function onMainClick(e) {
 const LENSES = { strands: 'Strands', papers: 'Papers', authors: 'Authors' };
 const LENS_TEXT = {
   strands: 'Fields, methods, data sources and topics, linked whenever they meet in the same paper. Bigger means more papers; thicker means more often together. Dashed ink links and ringed nodes appeared recently.',
-  papers: 'Each paper linked to its closest neighbours: shared authors and topics count most, then data, methods and fields. Clusters are strands of research.',
+  papers: 'Each paper linked to its closest neighbours. Choose what they must share: topic and literature, methodological approach, identification strategy, data or authors (or everything at once). Click a paper to see what it shares with each neighbour.',
   authors: 'Authors (circles) linked to the fields they publish in (squares) and to their co-authors. Colour is the author’s main field family.',
 };
 function newSinceDate() {
@@ -424,7 +528,7 @@ function buildGraph() {
   const playing = S.net.step != null && S.net.step < (S.net.steps || []).length - 1;
   const newSince = playing ? (S.net.steps[S.net.step - 1] ? C.addDays(S.net.steps[S.net.step - 1], 1) : '') : newSinceDate();
   const dateOf = playing ? pubDate : p => p.added;
-  if (lens === 'papers') return C.paperGraph(papers, S.ctx, { max: S.prefs.maxPapers, newSince, dateOf });
+  if (lens === 'papers') return C.paperGraph(papers, S.ctx, { max: S.prefs.maxPapers, newSince, dateOf, match: C.MATCHES[S.prefs.match] ? S.prefs.match : 'all' });
   if (lens === 'authors') return C.authorGraph(papers, S.ctx, { minPapers: S.prefs.minAuthorPapers, newSince, dateOf });
   return C.strandsGraph(papers, S.ctx, { kinds: S.prefs.kinds, minEdge: S.prefs.minEdge, maxTopics: S.prefs.maxTopics, newSince, dateOf });
 }
@@ -465,7 +569,8 @@ function renderNetwork(keep = false) {
       ? `<span class="toolbar" role="group" aria-label="Node kinds">${[['field', 'Fields'], ['method', 'Methods'], ['data', 'Data'], ['topic', 'Topics']].map(([k, l]) => `<button type="button" class="btn ghost small" data-kind-toggle="${k}" aria-pressed="${!!S.prefs.kinds[k]}">${l}</button>`).join('')}</span>
          <label class="inline">Min. link <select id="net-min">${[1, 2, 3, 4, 6].map(v => `<option ${S.prefs.minEdge === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
          <label class="inline">Topics <select id="net-topics">${[15, 30, 45, 80, 150].map(v => `<option ${S.prefs.maxTopics === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`
-      : lens === 'papers' ? `<label class="inline">Papers <select id="net-max">${[150, 400, 800].map(v => `<option ${S.prefs.maxPapers === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`
+      : lens === 'papers' ? `<label class="inline">Match papers by <select id="net-match">${Object.entries(C.MATCHES).map(([k, m]) => `<option value="${k}" ${S.prefs.match === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select></label>
+         <label class="inline">Papers <select id="net-max">${[150, 400, 800].map(v => `<option ${S.prefs.maxPapers === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`
         : `<label class="inline">Authors with at least <select id="net-minauth">${[[0, 'auto'], [1, '1 paper'], [2, '2 papers'], [3, '3 papers']].map(([v, l]) => `<option value="${v}" ${S.prefs.minAuthorPapers === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
     $('#main').innerHTML = `<div class="heading"><div><h1>Research network</h1><p>${LENS_TEXT[lens]}</p></div>
         <div class="seg" role="group" aria-label="Lens">${Object.entries(LENSES).map(([k, l]) => `<button type="button" data-lens="${k}" aria-pressed="${lens === k}">${l}</button>`).join('')}</div></div>
@@ -535,7 +640,7 @@ function sidePanel() {
     return;
   }
   const list = n.kind === 'paper' ? [n.paper] : C.papersForNode(n, papers);
-  const ties = S.network.linksOf(n.id).map(l => ({ other: l.source.id === n.id ? l.target : l.source, w: l.weight, isNew: l.isNew })).sort((a, b) => b.w - a.w);
+  const ties = S.network.linksOf(n.id).map(l => ({ other: l.source.id === n.id ? l.target : l.source, w: l.weight, isNew: l.isNew, why: l.why || [] })).sort((a, b) => b.w - a.w);
   const prev = S.net.prev && S.network.node(S.net.prev);
   const pair = prev && prev.kind !== 'paper' && n.kind !== 'paper' ? C.papersForLink(prev, n, papers) : [];
   const authors = n.kind === 'author' || n.kind === 'paper' ? [] : C.ranked(list.reduce((o, p) => { p.authors.forEach(a => { o[a.n] = (o[a.n] || 0) + 1; }); return o; }, {}), 6);
@@ -546,7 +651,7 @@ function sidePanel() {
       : `<p class="small muted">${plural(list.length, 'paper')} in view${n.isNew ? ' · <b>new</b>' : ''}</p>${sparkline(list)}
         <div class="toolbar" style="margin-top:10px">${filterKey ? `<button type="button" class="btn small" data-net-filter="${filterKey}" data-key="${esc(n.key)}">Filter everything by this</button>` : `<button type="button" class="btn small" data-net-search="${esc(n.key)}">Search this topic</button>`}${n.kind === 'author' ? `<a class="btn ghost small" href="#author/${encodeURIComponent(n.key)}">Profile</a>` : ''}</div>`}</div>
     ${pair.length ? `<div class="panel"><span class="kind">Papers combining</span><h3>${esc(prev._label)} + ${esc(n._label)}</h3>${miniPapers(pair, 6)}</div>` : ''}
-    ${ties.length ? `<div class="panel"><span class="kind">Ties · click one, then another to see papers combining them</span><ul class="tie-list">${ties.slice(0, 14).map(t => `<li><button type="button" data-select="${esc(t.other.id)}">${esc(t.other._label)}</button>${t.isNew ? '<span class="new-tag">NEW</span>' : ''}<span class="w">${S.prefs.lens === 'papers' ? '' : fmt(Math.round(t.w * 10) / 10)}</span></li>`).join('')}</ul></div>` : ''}
+    ${ties.length ? `<div class="panel"><span class="kind">Ties · click one, then another to see papers combining them</span><ul class="tie-list">${ties.slice(0, 14).map(t => `<li><button type="button" data-select="${esc(t.other.id)}">${esc(t.other._label)}${t.why.length ? `<small class="muted shared">shares: ${esc(C.describeShared(t.why, S.ctx, [n.paper, t.other.paper].filter(Boolean)).join(', '))}</small>` : ''}</button>${t.isNew ? '<span class="new-tag">NEW</span>' : ''}<span class="w">${S.prefs.lens === 'papers' ? '' : fmt(Math.round(t.w * 10) / 10)}</span></li>`).join('')}</ul></div>` : ''}
     ${authors.length ? `<div class="panel"><span class="kind">Most active authors here</span><ul class="tie-list">${authors.map(([name, c]) => `<li><span style="flex:1">${esc(name)}</span><span class="w">${c}</span></li>`).join('')}</ul></div>` : ''}
     ${n.kind !== 'paper' ? `<div class="panel"><span class="kind">Latest papers</span>${miniPapers(list, 6)}</div>` : ''}`;
 }
@@ -574,6 +679,7 @@ function onNetworkEvent(e) {
     if (t.id === 'net-min') { S.prefs.minEdge = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-topics') { S.prefs.maxTopics = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-max') { S.prefs.maxPapers = +t.value; savePrefs(); drawNetwork(); }
+    if (t.id === 'net-match') { S.prefs.match = t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-minauth') { S.prefs.minAuthorPapers = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-new') { S.prefs.highlight = t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-find') { if (!S.network.find(t.value)) toast('No node by that name in this view.'); }
@@ -723,8 +829,8 @@ function trendsHtml() {
 function nextRun() {
   const now = new Date();
   for (let i = 0; i < 8; i++) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + i, 5, 23));
-    if ([2, 5].includes(d.getUTCDay()) && d > now) return d;
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + i, 7, 30));
+    if (d.getUTCDay() === 2 && d > now) return d;
   }
   return null;
 }
@@ -737,18 +843,17 @@ function sourcesHtml() {
   const journals = S.config.journalGroups.map(g => `<tr><th colspan="4" style="padding-top:16px">${esc(g.label)}</th></tr>${S.config.journals.filter(j => j.group === g.key).map(j => `<tr><td>${esc(j.name)} <span class="muted small">${esc(j.short)}</span></td><td class="num">${per[j.key] || 0}</td><td class="small">${lastAdded[j.key] ? dayLabel(lastAdded[j.key]) : '—'}</td><td class="small">${j.enabled === false ? 'Paused' : 'Collecting'}</td></tr>`).join('')}`).join('');
   return `<div class="heading"><div><h1>Sources & settings</h1><p>Where the papers come from, how they are summarised, and what stays on this device.</p></div></div>
     <div class="stats"><div class="stat"><strong>${fmt(S.papers.length)}</strong><span>papers kept in the radar</span></div><div class="stat"><strong>${last ? dayLabel(last.at.slice(0, 10), { day: 'numeric', month: 'short' }) : '—'}</strong><span>last update${last ? ` · ${last.added} added` : ''}</span></div>
-      <div class="stat"><strong>${nr ? nr.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</strong><span>next scheduled update (Tue & Fri, ~06:30 Paris)</span></div><div class="stat"><strong>${pct(S.papers.length ? model / S.papers.length : 0)}</strong><span>summarised by a model · ${pct(S.papers.length ? withConc / S.papers.length : 0)} also read the conclusion</span></div></div>
-    ${model < S.papers.length ? `<div class="notice warn" style="margin-bottom:16px"><b>${fmt(S.papers.length - model)} papers have automatic summaries only.</b> They were tagged with keyword rules because the collector had no model key. Add one (below) and each update upgrades the most recent ${'60'} of them, or start a larger catch-up by hand.</div>` : ''}
+      <div class="stat"><strong>${nr ? nr.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</strong><span>next weekly update (Tuesdays, morning, Paris time)</span></div><div class="stat"><strong>${pct(S.papers.length ? model / S.papers.length : 0)}</strong><span>summarised by a model · ${pct(S.papers.length ? withConc / S.papers.length : 0)} also read the conclusion</span></div></div>
+    ${model < S.papers.length ? `<div class="notice" style="margin-bottom:16px"><b>${fmt(S.papers.length - model)} papers still have keyword-based summaries</b> (marked “auto-extracted”). They are being summarised in weekly batches, newest first.</div>` : ''}
     <div class="grid-2"><div class="panel setup"><span class="eyebrow">How it works</span>
-        <ol><li>Every Tuesday and Friday a GitHub Action (<code>.github/workflows/literature-radar.yml</code>) asks <b>OpenAlex</b> for new articles in the journals below, and reads <b>NBER</b>'s own list of working papers (released each Monday, so they arrive the next morning, dated to their release day). It keeps those published in the last ${S.config.lookbackDays} days and not yet in the radar.</li>
-        <li>Missing abstracts are filled from <b>Crossref</b> and <b>Semantic Scholar</b>. When a legal open-access copy exists (arXiv, repositories, open publisher PDFs), its <b>conclusion section</b> is read. Publishers that block scripts are skipped.</li>
-        <li>A model writes the research question, summary and conclusion, and tags fields, methods, identification, data, topics, setting and JEL codes against the fixed lists in <code>radar/config.json</code>. Without a key, keyword rules tag the paper and it is upgraded later.</li>
-        <li>Papers are only ever added, never dropped, so the network and trends build up over time.</li></ol></div>
-      <div class="panel setup"><span class="eyebrow">Turn on model summaries</span>
-        <ol><li>On GitHub: repository <b>Settings → Secrets and variables → Actions → New repository secret</b>.</li>
-        <li>Name it <code>ANTHROPIC_API_KEY</code> (Claude, recommended) or <code>OPENROUTER_API_KEY</code> (free models, slower and rate-limited). Paste the key there, never in the app or in chat.</li>
-        <li>Optional: a variable <code>RADAR_MODEL</code> picks the Claude model (default <code>claude-opus-5-5</code>; <code>claude-haiku-5-5</code> costs about 1/40th), and a free <code>OPENALEX_API_KEY</code> secret avoids OpenAlex's shared daily budget.</li>
-        <li>To catch up on old papers at once: <b>Actions → EconRadar → Run workflow</b>, with “papers to re-summarise” set to e.g. 1500 to redo them all.</li></ol></div></div>
+        <ol><li>Every Tuesday morning, after NBER's Monday release, the collector asks <b>OpenAlex</b> for new articles in the ${S.config.journals.filter(j => j.kind !== 'working').length} journals below and reads <b>NBER</b>'s own list of working papers, each dated to its release day. The radar covers everything they published since ${dayLabel(S.config.since || '2020-01-01', { month: 'long', year: 'numeric' })}.</li>
+        <li>Missing abstracts are filled from <b>Crossref</b> and <b>Semantic Scholar</b>. When a legal open-access copy exists, its <b>conclusion section</b> is read. Publishers that block scripts are skipped.</li>
+        <li><b>Claude</b> then writes each paper's research question, contribution, summary and identification strategy, and tags its fields, methods, data, topics, setting and JEL codes against fixed lists. The tags are checked against those lists before anything is published.</li>
+        <li>The <a href="#newsletter">weekly newsletter</a> recaps what the update added. Papers are never dropped, so the network and the trends build up over time.</li></ol></div>
+      <div class="panel setup"><span class="eyebrow">Reading the summaries</span>
+        <ol><li>Summaries come from the abstract and, when available, the conclusion: they are a guide to what to read, not a substitute. Check the paper before citing it.</li>
+        <li>Lines marked <span class="badge auto">AUTO-EXTRACTED</span> are sentences taken from the abstract by keyword rules, waiting for their model summary.</li>
+        <li>Saved papers, read marks, notes and followed authors stay in this browser only (back them up below). Nothing you do here is sent anywhere, except the email you give to subscribe.</li></ol></div></div>
     <div class="section-head"><h2>Journals & working papers</h2><p>Edit <code>radar/config.json</code> to add or pause one</p></div>
     <div class="panel table-scroll"><table class="data"><thead><tr><th>Source</th><th class="num">Papers</th><th>Last added</th><th>Status</th></tr></thead><tbody>${journals}</tbody></table></div>
     <div class="section-head"><h2>Update log</h2></div>
@@ -766,6 +871,7 @@ function bindMain() {
   main.addEventListener('change', e => {
     if (S.view === 'network') onNetworkEvent(e);
     if (e.target.id === 'sort') { S.prefs.sort = e.target.value; savePrefs(); render(); }
+    if (e.target.id === 'nl-issue') location.hash = 'newsletter/' + e.target.value;
     if (e.target.id === 'export') { exportPapers(e.target.value); e.target.value = ''; }
     if (e.target.id === 'trend-scope') { S.prefs.trendScope = e.target.value; savePrefs(); render(); }
     if (e.target.id === 'import-file') importUser(e.target.files[0]);

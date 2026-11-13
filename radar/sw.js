@@ -1,6 +1,6 @@
-const CACHE='econradar-v4',SHELL=['../shared/motion.css?v=1','../shared/motion.mjs?v=1','./','./index.html','./style.css?v=3','./app.mjs?v=4','./core.mjs?v=2','./graph.mjs?v=1','./vendor/d3.min.js','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png','./config.json'];
+const CACHE='econradar-v6',SHELL=['../shared/motion.css?v=1','../shared/motion.mjs?v=1','./','./index.html','./style.css?v=4','./app.mjs?v=6','./core.mjs?v=4','./graph.mjs?v=1','./vendor/d3.min.js','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png','./config.json'];
 // The paper files change twice a week: always try the network first, fall back to the last copy offline.
-const FRESH=/\/(data\/[^/]+\.json|config\.json|focus\.json)$/;
+const FRESH=/\/(data\/(?:newsletter\/)?[^/]+\.json|config\.json|focus\.json)$/;
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{await Promise.all((await caches.keys()).filter(k=>(k.startsWith('econradar-')||k.startsWith('literature-radar-'))&&k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim();})()));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin)return;

@@ -1,50 +1,59 @@
 # EconRadar
 
-New papers from the top economics journals and NBER working papers (and a few journals beyond economics), collected twice a week, summarised, tagged and mapped. Installable like the other apps; it works offline with the last papers it loaded.
+Every paper since 2020 from 20 leading economics journals and NBER, updated weekly, summarised by Claude, tagged, mapped, and recapped in a weekly newsletter. Installable like the other apps; it works offline with the last papers it loaded.
 
 ## What it does
+
+The app is read-only for visitors: they browse, filter, save papers on their own device and subscribe to the newsletter. All collecting and summarising happens in the weekly update.
 
 - **Latest**: every new paper with its research question, a 2–3 sentence summary, what the conclusion says (when an open-access copy could be read), and tags for field, method, data, topics. Papers new since your last visit are marked. Save, mark read, add a private note, export BibTeX / RIS / CSV.
 - **Network**, three lenses on whatever the filters select:
   - *Strands*: fields, methods, data sources and topics linked whenever they meet in a paper. Size is popularity. Dashed ink links and ringed nodes are new, so you can see which methods a literature is starting to use and on what data.
-  - *Papers*: each paper linked to its nearest neighbours (shared authors and topics count most), so clusters are strands of research.
+  - *Papers*: each paper linked to its nearest neighbours, matched on what you choose: topic and literature, methodological approach, identification strategy, data, authors, or everything. Clicking a paper shows what it shares with each neighbour.
   - *Authors*: who publishes in which field and with whom.
   - **Replay history** rebuilds the network week by week by publication date. Click a node, then one of its ties, to list the papers that combine the two.
+- **Newsletter**: the weekly two-page issue (page 2 for the fields you pick) and the subscribe form.
 - **Authors**: who is active in what (heat map by field family), sortable by output, recent activity or name; profiles with field/method mix, co-authors and papers. Follow authors to have their new papers flagged.
 - **Trends**: papers per quarter or month by field family; methods, data, topics or fields over time (share of papers, small multiples); what is rising or fading (last 90 days against before); a **frontier log** of firsts (the first time a method or data source shows up in a field since the radar started); the latest research questions.
 - **Filters** (shared by every view): text search, publication date (presets or a range; NBER papers carry the day NBER released them), field or field family, method, data, source (journal or NBER), author, saved, unread, followed authors, model-summarised only. On Latest, the update chips show what one collection added.
 
 ## Where the papers come from
 
-`tools/collect_literature.py` runs from `.github/workflows/literature-radar.yml` every Tuesday and Friday at 05:23 UTC (NBER releases its new working papers on Monday evenings, so they arrive the next morning):
+The corpus is every article published since January 2020 in 20 leading economics journals (the top five, JEEA, EJ, REStat, AER: Insights, the four AEJs, JOLE, JPubE, JDE, JME, JIE, RAND and the Journal of Econometrics) and every NBER working paper since 2020.
 
-1. **OpenAlex** lists articles in the journals of `config.json` published in the last 60 days and not yet stored (authors with stable ids, institutions, abstracts). **NBER** working papers come from NBER's own listing and paper pages: the day NBER released each one, its full abstract and authors, and its open PDF. OpenAlex misfiles some NBER papers and dates them to a month, so it only adds author ids and institutions, now or on a later run once it has the paper (`"listing": "nber"` in `config.json`).
-2. Missing abstracts come from **Crossref** and **Semantic Scholar**. When a legal open-access PDF exists (arXiv, repositories, open publisher copies), its conclusion section is extracted. Publishers that block scripts (Wiley, OUP, ScienceDirect, SSRN…) are skipped, never worked around.
-3. `tools/radar_enrich.py` writes the question, summary, conclusion, identification strategy, data description, and tags (fields, methods, data types, topics, geography, period, JEL) with **Claude** (`ANTHROPIC_API_KEY`) or **OpenRouter** free models (`OPENROUTER_API_KEY`), validated against the lists in `config.json`. Without a key, keyword rules tag the paper (marked “auto-extracted”); each later run upgrades up to 60 of those once a key exists.
-4. Papers are appended to `data/papers-YYYY-MM.json` (by month added) and `data/index.json` keeps the shard list and the run log. Nothing is ever removed, so the network and trends grow over time. Abstracts are kept as excerpts of at most 180 words with a link to the article; PDF text is never stored.
+1. **OpenAlex** lists the journal articles (authors with stable ids, institutions, abstracts). **NBER** papers come from NBER's own listing and paper pages, each dated to its release day; OpenAlex adds author ids.
+2. Missing abstracts come from **Crossref** and **Semantic Scholar**. For new papers, a legal open-access PDF's conclusion is read and kept on the Mac (`.radar-cache/`, never published) until the paper is summarised.
+3. **Claude** writes each paper's question, contribution, summary, conclusion, identification and tags in a working session (no API key), validated against the lists in `config.json`. Until then keyword rules tag the paper ("auto-extracted").
+4. Papers are stored by publication year: `data/papers-YYYY.json` (one paper per line, loaded newest year first) and `data/abstracts-YYYY.json` (fetched when a paper is opened); `data/index.json` lists the years and the run log. Nothing is removed unless its journal leaves the list.
 
-### Setup (GitHub → Settings → Secrets and variables → Actions)
+### The weekly update
 
-| Name | Kind | What for |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | secret | Model summaries with Claude (recommended). |
-| `OPENROUTER_API_KEY` | secret | Alternative: OpenRouter's free models, used only when there is no Anthropic key. About 50 summaries a day (1,000 once $10 of credit has ever been bought): each run summarises its new papers first, and stops calling once the day's allowance is used. Free endpoints must be allowed at openrouter.ai/settings/privacy. The collector ranks the live free-model list (models that enforce JSON first), moves to the next model when an answer is unusable, and stops for the run after 5 papers in a row fail, to save the allowance. `RADAR_OPENROUTER_MODEL` pins one model. When an Anthropic key is added later, Claude redoes these summaries after the rule-tagged ones. |
-| `OPENALEX_API_KEY` | secret | Optional, free from openalex.org/settings/api. Without it the collector shares OpenAlex's small keyless daily budget with every GitHub runner on the same IP. |
-| `RADAR_MODEL` | variable | Claude model; default `claude-opus-5-5`. `claude-haiku-5-5` costs about 1/40th. |
+A scheduled task in the Claude desktop app (**EconRadar weekly update**, Tuesdays at 08:30, after NBER's Monday release) follows [`tools/WEEKLY.md`](../tools/WEEKLY.md): collect, summarise the week's papers plus up to 100 from the backlog, build the newsletter, run the tests, push `radar/data`. It runs only while the Mac is awake and the app open (a missed run starts at the next launch). The GitHub workflow is kept for manual collection only.
 
-**Cost** with Claude Opus 5.5 at low effort: roughly 3–4 cents a paper, so about 60 papers a week ≈ $2/week. Re-summarising the ~1,400 seeded papers once ≈ $40–50 (Haiku 5.5: about $1). Start that catch-up from **Actions → EconRadar → Run workflow** with “papers to re-summarise” = 1500. A run stops starting new summaries after 80 minutes (`--time-budget`) and saves what it has; the rest wait for the next run. A new Anthropic account has low rate limits, so expect to start it two or three times.
+Summaries by hand (a catch-up, or the backlog):
+
+```
+python3 tools/radar_batch.py status
+python3 tools/radar_batch.py instructions          # once per session
+python3 tools/radar_batch.py export --n 25 --out /tmp/batch.md
+python3 tools/radar_batch.py import --answers /tmp/answers.json --by claude-sonnet-5-5
+```
+
+### The newsletter
+
+`tools/newsletter.py` builds each week's issue (`data/newsletter/<date>.json`, shown in the app's **Newsletter** tab) from the papers the week added: page 1 for everyone (highlights, methods and identification strategies, three-month trends), page 2 per field family (key papers, venue, contribution, the earlier papers they relate to, active authors). Subscribers pick field families on the signup form; they become Buttondown tags, and the email shows each subscriber only their fields' sections (none picked: all).
+
+Setup, once: create a Buttondown account, put its username in `config.json` → `newsletter.buttondown` (the subscribe form appears), and make `BUTTONDOWN_API_KEY` available to the scheduled task (e.g. in `~/.zshenv`). The routine only creates drafts; review and send them from Buttondown (`newsletter.py send --publish` sends directly). Tags may need a paid Buttondown plan; without them everyone gets every section.
 
 ### Running it by hand
 
 ```
-python3 tools/collect_literature.py                    # new papers in the 60-day window
-python3 tools/collect_literature.py --since 2026-05-01 # backfill
-python3 tools/collect_literature.py --reenrich 200     # upgrade rule-tagged papers (needs a key)
-python3 tools/collect_literature.py --dry-run --limit 5
-python3 tools/collect_literature.py --redate-nber      # stored NBER papers: release day from NBER's pages
+python3 tools/collect_literature.py --no-model                       # new papers (60-day window)
+python3 tools/collect_literature.py --no-model --since 2020-01-01 --max-pdfs 0   # rebuild
+python3 tools/newsletter.py build && python3 tools/newsletter.py render
 ```
 
-Needs Python 3.12; `pip install pypdf` for conclusions and `pip install anthropic` for Claude.
+Needs Python 3.12 and `pip install pypdf` for conclusions.
 
 ### Adding a journal or a field
 

@@ -34,7 +34,7 @@ export function normalizePaper(raw, ctx) {
   return {
     id: str(raw.id, 40), doi: str(raw.doi, 200), title: str(raw.title, 500), journal: str(raw.journal, 40),
     published: /^\d{4}-\d\d-\d\d$/.test(raw.published) ? raw.published : '', added: /^\d{4}-\d\d-\d\d$/.test(raw.added) ? raw.added : '1970-01-01',
-    authors, abstract: unlabel(str(raw.abstract, 3000)), url: str(raw.url, 500), pdf: str(raw.pdf, 500), kind: str(raw.kind, 20) || 'article',
+    authors, abstract: unlabel(str(raw.abstract, 3000)), url: str(raw.url, 500) || (str(raw.doi) ? 'https://doi.org/' + str(raw.doi, 200) : ''), pdf: str(raw.pdf, 500), kind: str(raw.kind, 20) || 'article',
     q: str(raw.q, 400), contribution: str(raw.contribution, 600), summary: unlabel(str(raw.summary, 1200)), conclusion: str(raw.conclusion, 800),
     fields: keys(raw.fields, ctx.fields, 3), methods: keys(raw.methods, ctx.methods, 4), data: keys(raw.data, ctx.data, 4),
     ident: str(raw.ident, 300), dataDetail: str(raw.dataDetail, 300),
@@ -118,6 +118,8 @@ export function dateWindow(f, { today }) {
 }
 
 const haystacks = new WeakMap();
+/** Abstracts arrive later, from their own file (abstracts-YYYY.json); they join the search text. */
+export function setAbstract(p, text) { p.abstract = unlabel(str(text, 3000)); haystacks.delete(p); }
 function haystack(p) {
   let h = haystacks.get(p);
   if (!h) haystacks.set(p, h = fold([p.title, p.q, p.contribution, p.summary, p.conclusion, p.abstract, p.ident, p.dataDetail, p.topics.join(' '), p.geo.join(' '), p.period, p.authors.map(a => a.n + ' ' + a.inst).join(' '), p.jel.join(' ')].join(' • ')));
@@ -155,9 +157,16 @@ export function filterPapers(papers, f, ctx, { user = {}, today = isoDay(Date.no
  * the order the radar received them. Everything collected on the first day forms the
  * baseline and is never flagged, so firsts mean "new since the radar started".
  */
-export function firsts(papers) {
-  const order = [...papers].sort((a, b) => a.added.localeCompare(b.added) || (a.published || '').localeCompare(b.published || '') || a.id.localeCompare(b.id));
-  const seedDay = order[0]?.added || '';
+/**
+ * Firsts, by publication date: the first paper in which a method appears, a method meets a
+ * field, or a data source meets a field. The corpus's first year is the baseline (what was
+ * already there), so firsts are reported only for papers published after it.
+ */
+export function firsts(papers, { baselineYears = 1 } = {}) {
+  const dated = papers.filter(p => p.published);
+  const order = [...dated].sort((a, b) => a.published.localeCompare(b.published) || a.id.localeCompare(b.id));
+  const start = order[0]?.published || '';
+  const baseline = start ? `${+start.slice(0, 4) + baselineYears}${start.slice(4)}` : '';
   const seen = new Set(), out = new Map();
   for (const p of order) {
     const items = [];
@@ -166,7 +175,7 @@ export function firsts(papers) {
     for (const m of p.methods) for (const f of p.fields) mark(`mf|${m}|${f}`, { kind: 'method-field', method: m, field: f });
     for (const d of p.data) for (const f of p.fields) mark(`df|${d}|${f}`, { kind: 'data-field', data: d, field: f });
     for (const t of p.topics) mark('t|' + t, { kind: 'topic', topic: t });
-    if (p.added !== seedDay && items.length) out.set(p.id, items.filter(i => !(i.kind === 'method-field' && items.some(j => j.kind === 'method' && j.method === i.method))));
+    if (p.published >= baseline && items.length) out.set(p.id, items.filter(i => !(i.kind === 'method-field' && items.some(j => j.kind === 'method' && j.method === i.method))));
   }
   return out;
 }
@@ -239,32 +248,66 @@ export function strandsGraph(papers, ctx, { kinds = { field: true, method: true,
  * Papers: each paper linked to its closest neighbours. Shared authors and topics weigh
  * most, then data and methods, then fields; rarer features weigh more (idf).
  */
-export function paperGraph(papers, ctx, { max = 400, k = 4, minScore = 2.2, newSince = '', dateOf = p => p.added } = {}) {
+// What two papers must share to be tied in the Papers lens.
+export const MATCHES = {
+  all: { label: 'Everything', minScore: 2.2 },
+  topic: { label: 'Topic & literature', minScore: 2 },
+  method: { label: 'Methodological approach', minScore: 1.6 },
+  ident: { label: 'Identification strategy', minScore: 1.6 },
+  data: { label: 'Data', minScore: 1.6 },
+  author: { label: 'Authors', minScore: 2 },
+};
+function paperFeatures(p, ctx, match) {
+  const group = m => ctx.methods.get(m)?.group;
+  const authors = () => p.authors.map(a => ['a:' + authorKey(a), 3]);
+  const topics = () => [...p.topics.map(t => ['t:' + t, 2]), ...p.fields.map(f => ['f:' + f, 0.7])];
+  const design = () => p.methods.filter(m => group(m) === 'design').map(m => ['m:' + m, 2]);
+  const approach = () => p.methods.filter(m => group(m) !== 'design').map(m => ['m:' + m, 2]);
+  const data = () => p.data.map(d => ['d:' + d, 2]);
+  if (match === 'topic') return topics();
+  if (match === 'method') return [...approach(), ...design().map(([k]) => [k, 0.6])];
+  if (match === 'ident') return design();
+  if (match === 'data') return data();
+  if (match === 'author') return authors();
+  return [...authors(), ...p.topics.map(t => ['t:' + t, 2]), ...p.data.map(d => ['d:' + d, 0.8]), ...p.methods.map(m => ['m:' + m, 1]), ...p.fields.map(f => ['f:' + f, 0.7])];
+}
+/** Readable labels for what two tied papers share (feature keys from paperGraph). */
+export function describeShared(keys, ctx, papers = []) {
+  return keys.map(k => {
+    const [kind, ...rest] = k.split(':'); const v = rest.join(':');
+    if (kind === 'a') return papers.flatMap(p => p.authors || []).find(a => authorKey(a) === v)?.n || 'an author';
+    if (kind === 't') return v;
+    if (kind === 'f') return ctx.label('field', v);
+    if (kind === 'm') return ctx.label('method', v);
+    return ctx.label('data', v);
+  }).filter((x, i, a) => a.indexOf(x) === i);
+}
+
+export function paperGraph(papers, ctx, { max = 400, k = 4, minScore = null, newSince = '', dateOf = p => p.added, match = 'all' } = {}) {
   const set = [...papers].sort(newestFirst).slice(0, max);
   const N = set.length || 1;
-  const feats = p => [
-    ...p.authors.map(a => ['a:' + authorKey(a), 3]), ...p.topics.map(t => ['t:' + t, 2]),
-    ...p.data.map(d => ['d:' + d, 0.8]), ...p.methods.map(m => ['m:' + m, 1]), ...p.fields.map(f => ['f:' + f, 0.7]),
-  ];
+  const feats = set.map(p => paperFeatures(p, ctx, match));
+  const threshold = minScore ?? (MATCHES[match] || MATCHES.all).minScore;
   const postings = new Map();
-  set.forEach((p, i) => feats(p).forEach(([f]) => { let l = postings.get(f); if (!l) postings.set(f, l = []); l.push(i); }));
+  feats.forEach((list, i) => list.forEach(([f]) => { let l = postings.get(f); if (!l) postings.set(f, l = []); l.push(i); }));
   const idf = f => Math.log(1 + N / postings.get(f).length);
   const neighbours = set.map(() => []);
   set.forEach((p, i) => {
-    const score = new Map();
-    for (const [f, w] of feats(p)) {
+    const score = new Map(), why = new Map();
+    for (const [f, w] of feats[i]) {
       const list = postings.get(f);
       if (list.length > 250) continue; // too common to separate strands
       const add = w * idf(f);
-      for (const j of list) if (j !== i) score.set(j, (score.get(j) || 0) + add);
+      for (const j of list) if (j !== i) { score.set(j, (score.get(j) || 0) + add); let y = why.get(j); if (!y) why.set(j, y = []); y.push([f, add]); }
     }
-    neighbours[i] = [...score].filter(([, s]) => s >= minScore).sort((a, b) => b[1] - a[1]).slice(0, k);
+    neighbours[i] = [...score].filter(([, s]) => s >= threshold).sort((a, b) => b[1] - a[1]).slice(0, k)
+      .map(([j, s]) => [j, s, why.get(j).sort((a, b) => b[1] - a[1]).map(([f]) => f).slice(0, 4)]);
   });
   const edges = new Map();
-  neighbours.forEach((list, i) => list.forEach(([j, s]) => {
+  neighbours.forEach((list, i) => list.forEach(([j, s, why]) => {
     const [a, b] = i < j ? [i, j] : [j, i];
     const key = a + '-' + b;
-    if (!edges.has(key)) edges.set(key, { source: set[a].id, target: set[b].id, weight: +s.toFixed(2), first: dateOf(set[a]) > dateOf(set[b]) ? dateOf(set[a]) : dateOf(set[b]) });
+    if (!edges.has(key)) edges.set(key, { source: set[a].id, target: set[b].id, weight: +s.toFixed(2), why, first: dateOf(set[a]) > dateOf(set[b]) ? dateOf(set[a]) : dateOf(set[b]) });
   }));
   const degree = {};
   for (const e of edges.values()) { bump(degree, e.source); bump(degree, e.target); }

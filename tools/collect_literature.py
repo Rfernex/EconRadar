@@ -143,8 +143,10 @@ def openalex_works(source_ids, since, key=''):
     With a key, cursor paging; without one OpenAlex only allows numbered pages
     (up to 10,000 results), so the order is pinned to keep pages stable."""
     works = []
-    for i in range(0, len(source_ids), 40):
-        chunk = source_ids[i:i + 40]
+    # Five journals per query: without a key OpenAlex pages stop at 10,000 results, which a
+    # long backfill over all journals at once would exceed.
+    for i in range(0, len(source_ids), 5):
+        chunk = source_ids[i:i + 5]
         cursor, page_no = '*', 1
         while cursor:
             params = {'filter': f'primary_location.source.id:{"|".join(chunk)},from_publication_date:{since},type:article|review|report|preprint',
@@ -255,7 +257,7 @@ def listing_month(label):
     return f'{m.group(2)}-{month:02d}' if month else ''
 
 
-def nber_listing(since, max_pages=20):
+def nber_listing(since, max_pages=200):
     """NBER working papers, newest first, back to the month of `since` (the listing gives months only)."""
     floor, rows = since[:7], []
     for page in range(1, max_pages + 1):
@@ -551,31 +553,75 @@ def read_open_copy(urls, parser=None):
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
+# Conclusions read from open-access copies wait here, on this machine only (never
+# published), until a Claude session summarises the paper (tools/radar_batch.py).
+CACHE = ROOT / '.radar-cache'
+CONCLUSIONS = CACHE / 'conclusions.json'
+
+
+def load_conclusions():
+    return json.loads(CONCLUSIONS.read_text()) if CONCLUSIONS.exists() else {}
+
+
+def save_conclusions(new):
+    new = {k: v[:4000] for k, v in (new or {}).items() if v}
+    if not new:
+        return
+    CACHE.mkdir(exist_ok=True)
+    data = load_conclusions()
+    data.update(new)
+    CONCLUSIONS.write_text(json.dumps(data, ensure_ascii=False))
+
+
+def year_of(p):
+    return (p.get('published') or p.get('added') or '0000')[:4]
+
+
+def dump(obj):
+    return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
+
+
+def slim(p):
+    """A paper as published to the app: no abstract (it has its own file), no empty fields,
+    and no link that the DOI already gives."""
+    return {k: v for k, v in p.items() if k != 'abstract' and v not in ('', [], None)
+            and not (k == 'url' and p.get('doi') and v == f"https://doi.org/{p['doi']}")}
+
+
 class Store:
+    """Papers by publication year: data/papers-YYYY.json (one paper per line, without its
+    abstract) and data/abstracts-YYYY.json, so the app can load the newest year first and
+    fetch an abstract only when a paper is opened. data/index.json lists the years and the
+    run log. Older month files (papers-YYYY-MM.json, abstracts inline) are read and rewritten."""
+
     def __init__(self, root):
         self.root = root
         self.index_path = root / 'index.json'
         self.index = json.loads(self.index_path.read_text()) if self.index_path.exists() else {
-            'version': 1, 'shards': [], 'runs': []}
-        self.shards = {}
+            'version': 2, 'shards': [], 'runs': []}
+        self.rows, self.legacy = {}, []
         for shard in self.index.get('shards', []):
             path = root / shard['file']
-            if path.exists():
-                self.shards[shard['month']] = json.loads(path.read_text()).get('papers', [])
-        self.dirty = set()
+            if not path.exists():
+                continue
+            papers = json.loads(path.read_text()).get('papers', [])
+            if 'month' in shard:
+                self.legacy.append(path)
+            side = root / shard['abstracts'] if shard.get('abstracts') else None
+            abstracts = json.loads(side.read_text()) if side and side.exists() else {}
+            for p in papers:
+                p.setdefault('abstract', abstracts.get(p['id'], ''))
+                if p.get('doi'):
+                    p.setdefault('url', f"https://doi.org/{p['doi']}")
+                self.rows[p['id']] = p
+        self.dirty = bool(self.legacy)
 
     def papers(self):
-        for month, rows in self.shards.items():
-            for row in rows:
-                yield month, row
+        for p in self.rows.values():
+            yield year_of(p), p
 
     def known(self):
-        ids, dois = set(), set()
-        for _, p in self.papers():
-            ids.add(p['id'])
-            if p.get('doi'):
-                dois.add(p['doi'])
-        return ids, dois
+        return set(self.rows), {p['doi'] for p in self.rows.values() if p.get('doi')}
 
     def top_topics(self, n=150):
         counts = {}
@@ -585,26 +631,48 @@ class Store:
         return [t for t, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
 
     def add(self, record):
-        month = record['added'][:7]
-        self.shards.setdefault(month, []).append(record)
-        self.dirty.add(month)
+        self.rows[record['id']] = record
+        self.dirty = True
 
     def touch(self, record):
-        month = record['added'][:7]
-        self.dirty.add(month)
+        self.dirty = True
+
+    def remove(self, keep):
+        """Drop the papers for which keep(paper) is false (e.g. a journal taken off the list)."""
+        gone = [pid for pid, p in self.rows.items() if not keep(p)]
+        for pid in gone:
+            del self.rows[pid]
+        self.dirty = self.dirty or bool(gone)
+        return len(gone)
 
     def save(self, run=None):
         self.root.mkdir(parents=True, exist_ok=True)
-        for month in sorted(self.dirty):
-            rows = sorted(self.shards[month], key=lambda p: (p['added'], p.get('published', ''), p['id']), reverse=True)
-            write_json(self.root / f'papers-{month}.json', {'version': 1, 'month': month, 'papers': rows})
-        shards = [{'month': m, 'file': f'papers-{m}.json', 'count': len(rows)}
-                  for m, rows in sorted(self.shards.items(), reverse=True)]
-        runs = ([run] if run else []) + self.index.get('runs', [])
-        runs = runs[:300]
-        self.index = {'version': 1, 'generatedAt': run['at'] if run else self.index.get('generatedAt', now_utc().isoformat(timespec='seconds')), 'total': sum(s['count'] for s in shards),
-                      'shards': shards, 'runs': runs}
+        years = {}
+        for p in self.rows.values():
+            years.setdefault(year_of(p), []).append(p)
+        shards = []
+        for year, rows in sorted(years.items(), reverse=True):
+            rows.sort(key=lambda p: (p.get('published', ''), p.get('added', ''), p['id']), reverse=True)
+            head = dump({'version': 2, 'year': year})
+            write_text(self.root / f'papers-{year}.json', head[:-1] + ',"papers":[\n' + ',\n'.join(dump(slim(p)) for p in rows) + '\n]}\n')
+            abstracts = [(p['id'], p['abstract']) for p in rows if p.get('abstract')]
+            write_text(self.root / f'abstracts-{year}.json', '{\n' + ',\n'.join(f'{dump(k)}:{dump(v)}' for k, v in abstracts) + '\n}\n')
+            shards.append({'year': year, 'file': f'papers-{year}.json', 'abstracts': f'abstracts-{year}.json', 'count': len(rows)})
+        keep = {s['file'] for s in shards} | {s['abstracts'] for s in shards}
+        for path in list(self.legacy) + list(self.root.glob('papers-*.json')) + list(self.root.glob('abstracts-*.json')):
+            if path.name not in keep and path.exists():
+                path.unlink()
+        runs = (([run] if run else []) + self.index.get('runs', []))[:300]
+        self.index = {'version': 2, 'generatedAt': run['at'] if run else self.index.get('generatedAt', now_utc().isoformat(timespec='seconds')),
+                      'total': len(self.rows), 'shards': shards, 'runs': runs}
         write_json(self.index_path, self.index)
+        self.legacy, self.dirty = [], False
+
+
+def write_text(path, text):
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(text)
+    tmp.replace(path)
 
 
 def write_json(path, payload):
@@ -731,6 +799,10 @@ def main(argv=None):
     key = os.environ.get('OPENALEX_API_KEY', '')
 
     works = openalex_works([s for s, j in journals.items() if j not in listed], since, key)
+    listed_keys = {j['key'] for j in config['journals'] if j.get('enabled', True)}
+    dropped = store.remove(lambda p: p.get('journal') in listed_keys)
+    if dropped:
+        log.info('Removed %d papers from journals no longer in config.json', dropped)
     known_ids, known_dois = store.known()
     cands, skipped = [], 0
     for w in works:
@@ -795,6 +867,8 @@ def main(argv=None):
     for c in cands:  # last resort: the listing's opening lines of the abstract
         if not c['abstract'] and c.get('_short'):
             c['abstract'] = c['_short']
+    if args.no_model and not args.dry_run:
+        save_conclusions(texts)  # kept for the Claude session that summarises these papers
 
     # Outside economics, an item with no abstract and no text is usually a comment or news piece.
     before = len(cands)
