@@ -41,7 +41,7 @@ python3 tools/radar_batch.py import --answers /tmp/answers.json --by claude-sonn
 
 ### The newsletter
 
-`tools/newsletter.py` builds each week's issue (`data/newsletter/<date>.json`, shown in the app's **Newsletter** tab) from the papers the week added: page 1 for everyone (highlights, methods and identification strategies, three-month trends), page 2 per field family (key papers, venue, contribution, the earlier papers they relate to, active authors). Subscribers pick field families on the signup form; they become Buttondown tags, and the email shows each subscriber only their fields' sections (none picked: all).
+`tools/newsletter.py` builds each week's issue (`data/newsletter/<date>.json`, shown in the app's **Newsletter** tab) from the papers the week added: page 1 for everyone (highlights, methods and identification strategies, three-month trends), page 2 per field family (in the app: a data-by-identification chart, key papers with the earlier papers they relate to, a ranked author table; in the email: the top paper and a link). Every subscriber gets the same email: page 2 has one short block per field, linking to the field's full section in the app (`#newsletter/<date>/<field>`), where readers pick their fields (remembered on their device). Per-subscriber fields would need Buttondown's paid tagging add-on.
 
 Setup, once: create a Buttondown account, put its username in `config.json` → `newsletter.buttondown` (the subscribe form appears), and make `BUTTONDOWN_API_KEY` available to the scheduled task (e.g. in `~/.zshenv`). The routine only creates drafts; review and send them from Buttondown (`newsletter.py send --publish` sends directly). Tags may need a paid Buttondown plan; without them everyone gets every section.
 

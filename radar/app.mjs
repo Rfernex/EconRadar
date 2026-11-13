@@ -264,21 +264,23 @@ async function renderNewsletter() {
   const main = $('#main');
   try {
     NL.list ||= (await getJSON('data/newsletter/index.json')).issues || [];
-    const day = NL.list.includes(S.arg) ? S.arg : NL.list[0];
+    // #newsletter/<date>/<field> (the email's page 2 links): that issue, scrolled to that field's section.
+    const [d, fam] = (S.arg || '').split('/');
+    const day = NL.list.includes(d) ? d : NL.list[0];
     if (day && !NL.issues.has(day)) NL.issues.set(day, await getJSON(`data/newsletter/${day}.json`));
     if (S.view !== 'newsletter') return;
-    main.innerHTML = newsletterHtml(day ? NL.issues.get(day) : null);
+    main.innerHTML = newsletterHtml(day ? NL.issues.get(day) : null, fam);
+    const target = fam && document.getElementById(`nl-fam-${fam}`);
+    if (target) { target.scrollIntoView({ block: 'start' }); target.classList.add('nl-target'); }
   } catch { NL.list = []; main.innerHTML = newsletterHtml(null); }
 }
 function subscribeHtml() {
   const user = S.config.newsletter?.buttondown;
-  const fams = S.config.families.map(f => `<label class="pick-opt"><input type="checkbox" name="tag" value="${esc(f.key)}" ${nlFamilies().includes(f.key) ? 'checked' : ''}><i class="dot" style="background:${famVar(f.key)}"></i><span>${esc(f.label)}</span></label>`).join('');
   return `<div class="panel subscribe"><span class="eyebrow">Subscribe</span><h3>Two pages every week, after the update</h3>
-    <p class="small muted">Page 1: what the week added, highlights, the methods and identification strategies in use, three-month trends. Page 2: the fields you pick, with each paper's contribution and how it relates to earlier work in the radar.</p>
+    <p class="small muted">Page 1: what the week added, highlights, a chart of the data and identification strategies in use, three-month trends. Page 2: the week's top paper in each field, with a link to its full section here (chart, key papers, authors). Pick your fields on this page to keep only those.</p>
     ${user ? `<form action="https://buttondown.com/api/emails/embed-subscribe/${esc(user)}" method="post" target="_blank" class="sub-form">
       <input type="email" name="email" required placeholder="you@university.edu" aria-label="Email address" autocomplete="email">
-      <fieldset><legend class="small muted">Your fields (page 2)</legend><div class="sub-fams">${fams}</div></fieldset>
-      <button type="submit" class="btn">Subscribe</button><p class="small muted">You will get a confirmation email. Unsubscribe or change fields from any issue.</p></form>`
+      <button type="submit" class="btn">Subscribe</button><p class="small muted">You will get a confirmation email. Unsubscribe from any issue.</p></form>`
     : '<p class="small muted"><b>Subscriptions open soon.</b> Meanwhile, every issue is here.</p>'}</div>`;
 }
 const nlFamilies = () => (Array.isArray(S.prefs.nlFamilies) ? S.prefs.nlFamilies.filter(k => S.ctx.families.has(k)) : []);
@@ -321,7 +323,7 @@ function nlAuthors(authors) {
     <tbody>${authors.map((a, i) => `<tr><td>${i + 1}</td><td>${esc(a.name)}</td><td class="num">${a.papers ?? 1}</td><td>${esc((a.topics || []).join(', ')) || '<span class="muted">–</span>'}</td>
       <td>${a.last ? `<button type="button" class="link" ${S.byId?.has(a.last.id) ? `data-open="${esc(a.last.id)}"` : ''}>${esc(a.last.title)}</button> <span class="muted">${esc(a.last.journal)} · ${dayLabel(a.last.published)}</span>` : '<span class="muted">New to the radar</span>'}</td></tr>`).join('')}</tbody></table></div>`;
 }
-function newsletterHtml(issue) {
+function newsletterHtml(issue, focus = '') {
   const pick = nlFamilies();
   const head = `<div class="heading"><div><span class="eyebrow">Weekly newsletter</span><h1>${issue ? 'Week of ' + dayLabel(issue.date, { day: 'numeric', month: 'long', year: 'numeric' }) : 'The weekly issue'}</h1>
     <p>Each week, after the update, a two-page recap of what EconRadar added. Read it here or get it by email.</p></div>
@@ -330,7 +332,7 @@ function newsletterHtml(issue) {
   const c = issue.counts, tr = issue.trends;
   const trendRows = (name, rows) => rows?.length ? `<li><b>${name}</b> ${rows.slice(0, 4).map(r => `${esc(r.label)} <span class="muted">${pct(r.before)} → ${pct(r.recent)}</span>`).join(' · ')}</li>` : '';
   const fams = Object.entries(issue.families).filter(([, f]) => f.count);
-  const shown = fams.filter(([k]) => !pick.length || pick.includes(k));
+  const shown = fams.filter(([k]) => !pick.length || pick.includes(k) || k === focus);
   return `${head}
     <div class="nl-layout"><div>
     <section class="panel nl-page"><span class="eyebrow">Page 1 · The week in economics research</span>
@@ -344,7 +346,7 @@ function newsletterHtml(issue) {
     <section class="panel nl-page"><span class="eyebrow">Page 2 · Your fields</span>
       <div class="chips" role="group" aria-label="Fields shown on page 2">${fams.map(([k, f]) => `<button type="button" class="chip btnish" data-nl-fam="${k}" aria-pressed="${pick.includes(k)}"><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">${f.count}</span></button>`).join('')}</div>
       <p class="small muted">${pick.length ? 'Showing the fields you picked (remembered on this device).' : 'Showing every field. Pick yours to keep page 2 to them.'}</p>
-      ${shown.map(([k, f]) => `<div class="nl-fam"><h3><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">· ${f.count} new</span></h3>
+      ${shown.map(([k, f]) => `<div class="nl-fam" id="nl-fam-${k}"><h3><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">· ${f.count} new</span></h3>
         ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${nlIdent(f.dataByIdent, issue.identCats, false)}
         ${f.methods.length ? `<p class="small"><b>Other approaches</b> ${f.methods.map(m => typeof m === 'string' ? esc(m) : `${esc(m.label)} <span class="muted">(${m.count})</span>`).join(', ')}</p>` : ''}
         ${f.papers.map(r => nlPaper(r, true)).join('')}
