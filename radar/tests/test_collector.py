@@ -549,6 +549,11 @@ class Routine(unittest.TestCase):
             self.assertEqual(rr.budget(96, 10, nxt), 2, 'never near the weekly limit')
             self.assertEqual(rr.budget(50, 80, nxt), 2, 'leaves a busy 5-hour window alone')
 
+    def test_one_week_key_for_the_same_reset(self):
+        import radar_routine as rr
+        self.assertEqual(rr.week_key('2026-11-21T06:59:59.766Z'), rr.week_key('2026-11-21T07:00:00Z'))
+        self.assertNotEqual(rr.week_key('2026-11-21T06:59:59Z'), rr.week_key('2026-11-28T06:59:59Z'))
+
     def test_worktrees_share_the_main_checkout_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             main, wt = Path(tmp) / 'repo', Path(tmp) / 'routine'
