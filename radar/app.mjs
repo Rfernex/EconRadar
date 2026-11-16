@@ -1,4 +1,4 @@
-import * as C from './core.mjs?v=5';
+import * as C from './core.mjs?v=6';
 import { createNetwork } from './graph.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
@@ -675,6 +675,9 @@ function sidePanel() {
   }
   const list = n.kind === 'paper' ? [n.paper] : C.papersForNode(n, papers);
   const ties = S.network.linksOf(n.id).map(l => ({ other: l.source.id === n.id ? l.target : l.source, w: l.weight, isNew: l.isNew, why: l.why || [] })).sort((a, b) => b.w - a.w);
+  const matchCounts = new Map();
+  if (n.kind === 'paper') ties.forEach(t => [...new Set(t.why)].forEach(key => matchCounts.set(key, (matchCounts.get(key) || 0) + 1)));
+  const matching = [...matchCounts].sort((a, b) => b[1] - a[1]);
   const prev = S.net.prev && S.network.node(S.net.prev);
   const pair = prev && prev.kind !== 'paper' && n.kind !== 'paper' ? C.papersForLink(prev, n, papers) : [];
   const authors = n.kind === 'author' || n.kind === 'paper' ? [] : C.ranked(list.reduce((o, p) => { p.authors.forEach(a => { o[a.n] = (o[a.n] || 0) + 1; }); return o; }, {}), 6);
@@ -684,8 +687,9 @@ function sidePanel() {
       ${n.kind === 'paper' ? `<p class="p-summary">${esc(n.paper.q || n.paper.summary)}</p><div class="toolbar"><button type="button" class="btn small" data-open="${esc(n.paper.id)}">Open paper</button></div>`
       : `<p class="small muted">${plural(list.length, 'paper')} in view${n.isNew ? ' · <b>new</b>' : ''}</p>${sparkline(list)}
         <div class="toolbar" style="margin-top:10px">${filterKey ? `<button type="button" class="btn small" data-net-filter="${filterKey}" data-key="${esc(n.key)}">Filter everything by this</button>` : `<button type="button" class="btn small" data-net-search="${esc(n.key)}">Search this topic</button>`}${n.kind === 'author' ? `<a class="btn ghost small" href="#author/${encodeURIComponent(n.key)}">Profile</a>` : ''}</div>`}</div>
+    ${n.kind === 'paper' ? `<div class="panel"><span class="kind">Matched on · ${esc((C.MATCHES[S.prefs.match] || C.MATCHES.all).label)}</span>${matching.length ? `<div class="match-features">${matching.map(([key, count]) => `<span class="match-feature"><strong>${esc(C.describeShared([key], S.ctx, [n.paper])[0])}</strong><small>${plural(count, 'linked paper')}</small></span>`).join('')}</div>` : '<p class="small muted">No linked papers in the current network.</p>'}</div>` : ''}
     ${pair.length ? `<div class="panel"><span class="kind">Papers combining</span><h3>${esc(prev._label)} + ${esc(n._label)}</h3>${miniPapers(pair, 6)}</div>` : ''}
-    ${ties.length ? `<div class="panel"><span class="kind">Ties · click one, then another to see papers combining them</span><ul class="tie-list">${ties.slice(0, 14).map(t => `<li><button type="button" data-select="${esc(t.other.id)}">${esc(t.other._label)}${t.why.length ? `<small class="muted shared">shares: ${esc(C.describeShared(t.why, S.ctx, [n.paper, t.other.paper].filter(Boolean)).join(', '))}</small>` : ''}</button>${t.isNew ? '<span class="new-tag">NEW</span>' : ''}<span class="w">${S.prefs.lens === 'papers' ? '' : fmt(Math.round(t.w * 10) / 10)}</span></li>`).join('')}</ul></div>` : ''}
+    ${ties.length ? `<div class="panel"><span class="kind">${n.kind === 'paper' ? 'Linked papers and shared matches' : 'Ties · click one, then another to see papers combining them'}</span><ul class="tie-list">${ties.slice(0, 14).map(t => `<li><button type="button" data-select="${esc(t.other.id)}">${esc(t.other._label)}${t.why.length ? `<small class="shared">Shares: <strong>${esc(C.describeShared(t.why, S.ctx, [n.paper, t.other.paper].filter(Boolean)).join(', '))}</strong></small>` : ''}</button>${t.isNew ? '<span class="new-tag">NEW</span>' : ''}<span class="w">${S.prefs.lens === 'papers' ? '' : fmt(Math.round(t.w * 10) / 10)}</span></li>`).join('')}</ul></div>` : ''}
     ${authors.length ? `<div class="panel"><span class="kind">Most active authors here</span><ul class="tie-list">${authors.map(([name, c]) => `<li><span style="flex:1">${esc(name)}</span><span class="w">${c}</span></li>`).join('')}</ul></div>` : ''}
     ${n.kind !== 'paper' ? `<div class="panel"><span class="kind">Latest papers</span>${miniPapers(list, 6)}</div>` : ''}`;
 }

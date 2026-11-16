@@ -196,6 +196,11 @@ dialog::backdrop{background:#0d16188a;backdrop-filter:blur(3px)}.dialog-close{di
  .heat th.row{max-width:150px}
 }
 .tie-list .shared{display:block;font-weight:400;font-size:11px;margin-top:2px}
+.tie-list .shared strong{color:var(--ink);font-weight:700}
+.match-features{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.match-feature{display:inline-flex;flex-direction:column;gap:2px;padding:6px 10px;border-radius:8px;background:var(--accent-soft);color:var(--ink);font-size:12px;max-width:100%;overflow-wrap:anywhere}
+.match-feature small{color:var(--text-secondary);font-size:10px}
+.tie-list li button:has(.shared){white-space:normal;overflow:visible}
 /* Newsletter */
 .nl-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}.nl-layout>div{display:grid;gap:18px}
 .nl-page h3{margin:20px 0 8px}.nl-page .chips{margin:8px 0}

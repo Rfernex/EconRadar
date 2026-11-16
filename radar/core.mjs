@@ -307,7 +307,7 @@ export function paperGraph(papers, ctx, { max = 400, k = 4, minScore = null, new
       for (const j of list) if (j !== i) { score.set(j, (score.get(j) || 0) + add); let y = why.get(j); if (!y) why.set(j, y = []); y.push([f, add]); }
     }
     neighbours[i] = [...score].filter(([, s]) => s >= threshold).sort((a, b) => b[1] - a[1]).slice(0, k)
-      .map(([j, s]) => [j, s, why.get(j).sort((a, b) => b[1] - a[1]).map(([f]) => f).slice(0, 4)]);
+      .map(([j, s]) => [j, s, why.get(j).sort((a, b) => b[1] - a[1]).map(([f]) => f)]);
   });
   const edges = new Map();
   neighbours.forEach((list, i) => list.forEach(([j, s, why]) => {
