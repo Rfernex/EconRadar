@@ -35,7 +35,7 @@ const S = {
   ctx: null, config: null, index: { shards: [], runs: [] }, papers: [], visible: [], firsts: new Map(), allAuthors: new Map(),
   user: C.cleanUser(local.get(KEYS.user, {})), filters: C.cleanFilters(local.get(KEYS.filters, {})),
   prefs: Object.assign({ sort: 'published', match: 'all', lens: 'strands', highlight: 'auto', kinds: { field: true, method: true, data: true, topic: true }, minEdge: 2, maxTopics: 45, maxPapers: 400, minAuthorPapers: 0, trendFacet: 'methods', trendBy: 'quarter', trendScope: '', authorSort: 'papers' }, local.get(KEYS.prefs, {})),
-  today: C.isoDay(Date.now()), lastRun: '', prevVisit: '', view: 'latest', arg: '', limit: 30, network: null, net: {}, playing: 0,
+  today: C.isoDay(Date.now()), lastRun: '', prevVisit: '', view: 'latest', arg: '', limit: 30, spotlight: 0, network: null, net: {}, playing: 0,
 };
 const saveUser = () => local.set(KEYS.user, S.user);
 const savePrefs = () => local.set(KEYS.prefs, S.prefs);
@@ -416,6 +416,18 @@ function sortPapers(list) {
 }
 
 // ---- Latest -------------------------------------------------------------------------
+function latestSpotlight() {
+  const papers = [...S.visible].sort(C.newestFirst).slice(0, 3);
+  if (!papers.length) return '';
+  const active = S.spotlight % papers.length;
+  return `<section class="spotlight" aria-label="Most recently added papers">
+    <div class="spotlight-head"><div><span class="eyebrow">Fresh from the radar</span><h2>Recently added</h2><p>The three most recently imported papers in your current view.</p></div>
+      <div class="spotlight-controls"><button type="button" data-act="spotlight-prev" aria-label="Previous paper" ${papers.length < 2 ? 'disabled' : ''}>←</button><span aria-live="polite">${active + 1} / ${papers.length}</span><button type="button" data-act="spotlight-next" aria-label="Next paper" ${papers.length < 2 ? 'disabled' : ''}>→</button></div></div>
+    <div class="spotlight-deck">${papers.map((p, i) => {
+      const position = papers.length === 3 ? (i === active ? 'active' : i === (active + 1) % 3 ? 'next' : 'previous') : i === active ? 'active' : 'next';
+      return `<article class="spotlight-card ${position}" data-spotlight-index="${i}"><span class="spotlight-index">0${i + 1} <span>· ${esc(journalShort(p.journal))}</span></span><h3>${esc(p.title)}</h3><p class="spotlight-authors">${esc(p.authors.map(a => a.n).slice(0, 3).join(' · '))}${p.authors.length > 3 ? ' et al.' : ''}</p><p class="spotlight-excerpt">${esc(p.q || p.summary || 'Open the paper for details.')}</p><div class="spotlight-bottom"><span>Added ${dayLabel(p.added)}</span><button type="button" data-open="${esc(p.id)}">View paper ↗</button></div></article>`;
+    }).join('')}</div></section>`;
+}
 function latestHtml() {
   const list = sortPapers(S.visible), shown = list.slice(0, S.limit);
   const sinceVisit = S.prevVisit ? S.papers.filter(isNewToYou).length : 0;
@@ -445,6 +457,7 @@ function latestHtml() {
       <div class="stat"><strong>${pct(modelShare)}</strong><span>summarised by the model; the rest are auto-extracted</span></div>
       <div class="stat"><strong>${fmt(new Set(S.visible.map(p => p.journal)).size)}</strong><span>journals represented</span></div></div>
     ${runs.length > 1 ? `<div class="chips" aria-label="Recent updates">${runs.map(r => `<button type="button" class="chip btnish" data-act="run" data-day="${r.at.slice(0, 10)}" aria-pressed="${S.filters.run === r.at.slice(0, 10)}" title="Papers added in this update">${dayLabel(r.at.slice(0, 10), { day: 'numeric', month: 'short' })} · ${plural(r.added, 'paper')}</button>`).join('')}</div>` : ''}
+    ${latestSpotlight()}
     ${shown.length ? body : '<div class="empty"><h2>Nothing matches these filters</h2><p>Loosen a filter above, or clear them all.</p></div>'}
     ${list.length > shown.length ? `<div class="load-more"><button type="button" class="btn ghost" data-act="more">Show ${Math.min(30, list.length - shown.length)} more of ${fmt(list.length - shown.length)}</button></div>` : ''}`;
 }
@@ -513,6 +526,15 @@ function onMainClick(e) {
   if (t.dataset.goto) { location.hash = t.dataset.goto; return; }
   if (t.dataset.nlFam) { const list = nlFamilies(), k = t.dataset.nlFam; S.prefs.nlFamilies = list.includes(k) ? list.filter(x => x !== k) : [...list, k]; savePrefs(); renderNewsletter(); return; }
   const card = t.closest('[data-id]'), id = card?.dataset.id, act = t.dataset.act;
+  if (act === 'spotlight-prev' || act === 'spotlight-next') {
+    const count = Math.min(3, S.visible.length);
+    if (!count) return;
+    S.spotlight = (S.spotlight + (act === 'spotlight-next' ? 1 : -1) + count) % count;
+    const section = t.closest('.spotlight');
+    section.outerHTML = latestSpotlight();
+    document.querySelector(`[data-act="${act}"]`)?.focus();
+    return;
+  }
   if (act === 'open') openPaper(id);
   else if (act === 'save' || act === 'read') {
     const key = act === 'save' ? 'saved' : 'read', on = !S.user[key][id];
