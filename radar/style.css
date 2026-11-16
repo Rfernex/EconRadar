@@ -265,3 +265,15 @@ dialog::backdrop{background:#0d16188a;backdrop-filter:blur(3px)}.dialog-close{di
 @keyframes page-in{from{opacity:0;transform:translateX(var(--page-dx,14px))}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){#author-table.page-turn tbody{animation:none}}
 .pick[data-pick="authors"] .pick-panel{left:auto;right:0}
+/* Network side panel: titles stay inside the panel; shared-features table */
+.tie-list li button{display:block}
+.mini-paper button{display:block;overflow-wrap:anywhere}
+.net-side .panel{min-width:0;overflow-wrap:anywhere}
+.share-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.share-table th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;text-align:left;padding:4px 4px;border-bottom:1px solid var(--line)}
+.share-table td{padding:5px 4px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+.share-table .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.share-table tr.on td{background:var(--accent-soft)}
+.share-table button.link{font-weight:650}
+.inline-label{font-size:12px;color:var(--text-secondary);margin-right:2px}
+.tie-list{grid-template-columns:minmax(0,1fr)}.tie-list li{min-width:0}

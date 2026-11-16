@@ -96,6 +96,23 @@ test('paper ties can be restricted to one kind of match, and say what is shared'
   assert.equal(C.normalizePaper({ id: 'X', title: 'T', doi: '10.1/x' }, ctx).url, 'https://doi.org/10.1/x');
 });
 
+test('several criteria at once link only papers that share something on each', () => {
+  const list = [
+    paper('P1', { topics: ['minimum wage'], methods: ['did'], authors: [{ n: 'A', id: 'A1' }] }),
+    paper('P2', { topics: ['minimum wage'], methods: ['rdd'], authors: [{ n: 'B', id: 'B1' }] }),
+    paper('P3', { topics: ['trade'], fields: ['international'], methods: ['did'], authors: [{ n: 'C', id: 'C1' }] }),
+    paper('P5', { topics: ['minimum wage'], methods: ['did'], authors: [{ n: 'D', id: 'D1' }] }),
+  ];
+  const ends = match => C.paperGraph(list, ctx, { match }).links.map(l => [l.source, l.target].sort().join());
+  const both = ends(['topic', 'ident']);
+  assert.ok(both.includes('P1,P5'));
+  assert.ok(!both.includes('P1,P2') && !both.includes('P1,P3'));
+  assert.deepEqual(C.matchCriteria(['topic', 'all']), ['all']);
+  assert.deepEqual(C.matchCriteria([]), ['all']);
+  assert.equal(C.matchLabel(['topic', 'data']), 'Topic & literature + Data');
+  assert.ok(C.paperFeatureMatches(list[0], list, ctx, ['topic', 'ident']).has('m:did'));
+});
+
 test('all feature matches include papers beyond graph limits and common-feature cutoff', () => {
   const list = Array.from({ length: 305 }, (_, i) => paper(`P${i}`, { methods: ['did'], topics: [i === 1 ? 'shared topic' : 'other'] }));
   const matches = C.paperFeatureMatches(list[0], list, ctx, 'ident');

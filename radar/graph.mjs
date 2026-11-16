@@ -210,17 +210,23 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
     }
     // Bigger graphs need more room: stronger repulsion, longer and softer links.
     const big = Math.min(1, nodes.length / 120);
+    // Very large graphs (the whole database): a coarser approximation, no overlap pass and a
+    // short warm-up (about 1 s for 20,000 papers instead of ~28 s); the layout then keeps
+    // settling on screen instead of freezing the page.
+    const huge = nodes.length > 3000;
+    const warm = huge ? Math.max(6, Math.round(240000 / nodes.length)) : 90;
+    sim.alphaDecay(huge ? 0.05 : 0.03);
     const linkDist = l => 30 + 30 * big + radius(l.source) + radius(l.target) + 40 / Math.sqrt(l.weight);
     sim.nodes(nodes)
       .force('link', d3.forceLink(links).id(n => n.id).distance(linkDist).strength(l => Math.min(0.7, 0.04 + (0.5 - 0.3 * big) * Math.sqrt(l.weight / opts.maxWeight))))
-      .force('charge', d3.forceManyBody().strength(n => -(30 + 40 * big) - (5 + 6 * big) * radius(n)).distanceMax(600))
-      .force('collide', d3.forceCollide(n => radius(n) + 3).iterations(2))
+      .force('charge', d3.forceManyBody().strength(n => -(30 + 40 * big) - (5 + 6 * big) * radius(n)).distanceMax(600).theta(huge ? 1.6 : 0.9))
+      .force('collide', huge ? null : d3.forceCollide(n => radius(n) + 3).iterations(2)) // overlap checks are too costly at that size
       .force('x', d3.forceX(0).strength(0.045)).force('y', d3.forceY(0).strength(0.045));
     const fresh = known < nodes.length * 0.5;
-    if (fresh) { fitted = false; sim.alpha(1); sim.tick(reduce.matches ? 300 : 90); }
+    if (fresh) { fitted = false; sim.alpha(1); sim.tick(reduce.matches ? (huge ? warm * 3 : 300) : warm); }
     else sim.alpha(Math.min(0.5, 0.12 + (nodes.length - known) / Math.max(10, nodes.length)));
     selected = prevSelected ? byId.get(prevSelected) || null : null;
-    if (reduce.matches) { sim.tick(200); sim.stop(); for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y }); fit(false); draw(); }
+    if (reduce.matches) { sim.tick(huge ? warm : 200); sim.stop(); for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y }); fit(false); draw(); }
     else sim.restart();
     if (fresh && !reduce.matches) { fit(false); }
     draw();

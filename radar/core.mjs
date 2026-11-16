@@ -283,13 +283,29 @@ function paperFeatures(p, ctx, match) {
   if (match === 'author') return authors();
   return [...authors(), ...p.topics.map(t => ['t:' + t, 2]), ...p.data.map(d => ['d:' + d, 0.8]), ...p.methods.map(m => ['m:' + m, 1]), ...p.fields.map(f => ['f:' + f, 0.7])];
 }
+/** Matching criteria as a clean list: one or several of topic/method/ident/data/author,
+ *  or ['all'] (everything at once). Accepts a string or an array. */
+export function matchCriteria(match) {
+  const list = [...new Set([].concat(match || 'all').filter(c => MATCHES[c]))];
+  return !list.length || list.includes('all') ? ['all'] : list;
+}
+/** A readable label for one or several criteria ("Methodological approach + Data"). */
+export function matchLabel(match) { return matchCriteria(match).map(c => MATCHES[c].label).join(' + '); }
+// Features of a paper under one or several criteria (union, strongest weight kept)
+function featuresFor(p, ctx, match) {
+  const crit = matchCriteria(match);
+  if (crit.length === 1) return paperFeatures(p, ctx, crit[0]);
+  const best = new Map();
+  for (const c of crit) for (const [f, w] of paperFeatures(p, ctx, c)) best.set(f, Math.max(best.get(f) || 0, w));
+  return [...best];
+}
 // All papers sharing each feature, independent of graph limits and edge scores.
 export function paperFeatureMatches(paper, papers, ctx, match = 'all') {
-  const keys = [...new Set(paperFeatures(paper, ctx, match).map(([key]) => key))];
+  const keys = [...new Set(featuresFor(paper, ctx, match).map(([key]) => key))];
   const result = new Map(keys.map(key => [key, []]));
   for (const other of papers) {
     if (other.id === paper.id) continue;
-    for (const key of new Set(paperFeatures(other, ctx, match).map(([feature]) => feature))) {
+    for (const key of new Set(featuresFor(other, ctx, match).map(([feature]) => feature))) {
       if (result.has(key)) result.get(key).push(other);
     }
   }
@@ -309,6 +325,9 @@ export function describeShared(keys, ctx, papers = []) {
 }
 
 export function paperGraph(papers, ctx, { max = 400, k = 4, minScore = null, newSince = '', dateOf = p => p.added, match = 'all' } = {}) {
+  const crit = matchCriteria(match);
+  if (crit.length > 1) return paperGraphAll(papers, ctx, { max, k, minScore, newSince, dateOf, crit });
+  match = crit[0];
   const set = [...papers].sort(newestFirst).slice(0, max);
   const N = set.length || 1;
   const feats = set.map(p => paperFeatures(p, ctx, match));
@@ -316,18 +335,75 @@ export function paperGraph(papers, ctx, { max = 400, k = 4, minScore = null, new
   const postings = new Map();
   feats.forEach((list, i) => list.forEach(([f]) => { let l = postings.get(f); if (!l) postings.set(f, l = []); l.push(i); }));
   const idf = f => Math.log(1 + N / postings.get(f).length);
-  const neighbours = set.map(() => []);
-  set.forEach((p, i) => {
-    const score = new Map(), why = new Map();
-    for (const [f, w] of feats[i]) {
-      const list = postings.get(f);
-      if (list.length > 250) continue; // too common to separate strands
-      const add = w * idf(f);
-      for (const j of list) if (j !== i) { score.set(j, (score.get(j) || 0) + add); let y = why.get(j); if (!y) why.set(j, y = []); y.push([f, add]); }
+  const neighbours = scoreNeighbours([feats], [postings], N, [threshold], k);
+  const edges = new Map();
+  neighbours.forEach((list, i) => list.forEach(([j, s, why]) => {
+    const [a, b] = i < j ? [i, j] : [j, i];
+    const key = a + '-' + b;
+    if (!edges.has(key)) edges.set(key, { source: set[a].id, target: set[b].id, weight: +s.toFixed(2), why, first: dateOf(set[a]) > dateOf(set[b]) ? dateOf(set[a]) : dateOf(set[b]) });
+  }));
+  const degree = {};
+  for (const e of edges.values()) { bump(degree, e.source); bump(degree, e.target); }
+  return {
+    nodes: set.map(p => ({ id: p.id, kind: 'paper', key: p.id, label: p.title, count: 1 + (degree[p.id] || 0), first: dateOf(p), family: primaryFamily(p, ctx), isNew: !!newSince && dateOf(p) >= newSince, paper: p })),
+    links: [...edges.values()].map(e => ({ ...e, isNew: !!newSince && e.first >= newSince })),
+    truncated: papers.length > set.length,
+  };
+}
+
+// Each paper's k best neighbours. featsBy: one list of per-paper features per criterion;
+// a pair must reach that criterion's threshold on every criterion. Scores accumulate in
+// typed arrays (fast enough for the whole database); the shared features ("why") are
+// worked out only for the neighbours kept.
+function scoreNeighbours(featsBy, postingsBy, N, thresholds, k) {
+  const C = featsBy.length, n = featsBy[0].length;
+  const accs = featsBy.map(() => new Float64Array(n)), seen = new Uint8Array(n), touched = [];
+  const usable = (c, f) => postingsBy[c].get(f).length <= 250; // too common to separate strands
+  const idf = (c, f) => Math.log(1 + N / postingsBy[c].get(f).length);
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    touched.length = 0;
+    for (let c = 0; c < C; c++) {
+      const acc = accs[c];
+      for (const [f, w] of featsBy[c][i]) {
+        if (!usable(c, f)) continue;
+        const add = w * idf(c, f);
+        for (const j of postingsBy[c].get(f)) if (j !== i) { if (!seen[j]) { seen[j] = 1; touched.push(j); } acc[j] += add; }
+      }
     }
-    neighbours[i] = [...score].filter(([, s]) => s >= threshold).sort((a, b) => b[1] - a[1]).slice(0, k)
-      .map(([j, s]) => [j, s, why.get(j).sort((a, b) => b[1] - a[1]).map(([f]) => f)]);
+    const cand = [];
+    for (const j of touched) {
+      let total = 0, ok = true;
+      for (let c = 0; c < C; c++) { const v = accs[c][j]; if (v < thresholds[c]) ok = false; total += v; accs[c][j] = 0; }
+      seen[j] = 0;
+      if (ok) cand.push([j, total]);
+    }
+    cand.sort((a, b) => b[1] - a[1]);
+    out[i] = cand.slice(0, k).map(([j, total]) => {
+      const why = new Map();
+      for (let c = 0; c < C; c++) {
+        const theirs = new Set(featsBy[c][j].map(([f]) => f));
+        for (const [f, w] of featsBy[c][i]) if (theirs.has(f) && usable(c, f)) why.set(f, Math.max(why.get(f) || 0, w * idf(c, f)));
+      }
+      return [j, total, [...why].sort((a, b) => b[1] - a[1]).map(([f]) => f)];
+    });
+  }
+  return out;
+}
+
+/** Paper graph under several criteria at once: two papers are linked only if they share
+ *  something on every criterion (each above that criterion's usual threshold); the
+ *  strongest such pairs, by total score, are kept as each paper's neighbours. */
+function paperGraphAll(papers, ctx, { max, k, minScore, newSince, dateOf, crit }) {
+  const set = [...papers].sort(newestFirst).slice(0, max);
+  const N = set.length || 1;
+  const per = crit.map(c => {
+    const feats = set.map(p => paperFeatures(p, ctx, c));
+    const postings = new Map();
+    feats.forEach((list, i) => list.forEach(([f]) => { let l = postings.get(f); if (!l) postings.set(f, l = []); l.push(i); }));
+    return { feats, postings, threshold: minScore ?? MATCHES[c].minScore };
   });
+  const neighbours = scoreNeighbours(per.map(x => x.feats), per.map(x => x.postings), N, per.map(x => x.threshold), k);
   const edges = new Map();
   neighbours.forEach((list, i) => list.forEach(([j, s, why]) => {
     const [a, b] = i < j ? [i, j] : [j, i];
