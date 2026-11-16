@@ -277,6 +277,19 @@ function paperFeatures(p, ctx, match) {
   if (match === 'author') return authors();
   return [...authors(), ...p.topics.map(t => ['t:' + t, 2]), ...p.data.map(d => ['d:' + d, 0.8]), ...p.methods.map(m => ['m:' + m, 1]), ...p.fields.map(f => ['f:' + f, 0.7])];
 }
+// All papers sharing each feature, independent of graph limits and edge scores.
+export function paperFeatureMatches(paper, papers, ctx, match = 'all') {
+  const keys = [...new Set(paperFeatures(paper, ctx, match).map(([key]) => key))];
+  const result = new Map(keys.map(key => [key, []]));
+  for (const other of papers) {
+    if (other.id === paper.id) continue;
+    for (const key of new Set(paperFeatures(other, ctx, match).map(([feature]) => feature))) {
+      if (result.has(key)) result.get(key).push(other);
+    }
+  }
+  for (const list of result.values()) list.sort(newestFirst);
+  return result;
+}
 /** Readable labels for what two tied papers share (feature keys from paperGraph). */
 export function describeShared(keys, ctx, papers = []) {
   return keys.map(k => {

@@ -1,4 +1,4 @@
-import * as C from './core.mjs?v=6';
+import * as C from './core.mjs?v=7';
 import { createNetwork } from './graph.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
@@ -700,6 +700,10 @@ function sidePanel() {
   const matchCounts = new Map();
   if (n.kind === 'paper') ties.forEach(t => [...new Set(t.why)].forEach(key => matchCounts.set(key, (matchCounts.get(key) || 0) + 1)));
   const matching = [...matchCounts].sort((a, b) => b[1] - a[1]);
+  const allMatches = n.kind === 'paper' ? C.paperFeatureMatches(n.paper, papers, S.ctx, S.prefs.match) : new Map();
+  const scope = n.id + ':' + S.prefs.match;
+  if (S.net.matchScope !== scope) { S.net.matchScope = scope; S.net.matchKey = ''; S.net.matchLimit = 30; }
+  const selectedMatches = allMatches.get(S.net.matchKey) || [];
   const prev = S.net.prev && S.network.node(S.net.prev);
   const pair = prev && prev.kind !== 'paper' && n.kind !== 'paper' ? C.papersForLink(prev, n, papers) : [];
   const authors = n.kind === 'author' || n.kind === 'paper' ? [] : C.ranked(list.reduce((o, p) => { p.authors.forEach(a => { o[a.n] = (o[a.n] || 0) + 1; }); return o; }, {}), 6);
@@ -710,6 +714,7 @@ function sidePanel() {
       : `<p class="small muted">${plural(list.length, 'paper')} in view${n.isNew ? ' · <b>new</b>' : ''}</p>${sparkline(list)}
         <div class="toolbar" style="margin-top:10px">${filterKey ? `<button type="button" class="btn small" data-net-filter="${filterKey}" data-key="${esc(n.key)}">Filter everything by this</button>` : `<button type="button" class="btn small" data-net-search="${esc(n.key)}">Search this topic</button>`}${n.kind === 'author' ? `<a class="btn ghost small" href="#author/${encodeURIComponent(n.key)}">Profile</a>` : ''}</div>`}</div>
     ${n.kind === 'paper' ? `<div class="panel"><span class="kind">Matched on · ${esc((C.MATCHES[S.prefs.match] || C.MATCHES.all).label)}</span>${matching.length ? `<div class="match-features">${matching.map(([key, count]) => `<span class="match-feature"><strong>${esc(C.describeShared([key], S.ctx, [n.paper])[0])}</strong><small>${plural(count, 'linked paper')}</small></span>`).join('')}</div>` : '<p class="small muted">No linked papers in the current network.</p>'}</div>` : ''}
+    ${n.kind === 'paper' ? `<div class="panel"><span class="kind">Find all papers sharing a feature</span><p class="small muted">Includes papers in the current filters and timeline, including those outside the graph or below its link threshold.</p><label class="inline">Shared feature <select id="net-all-feature"><option value="">Choose a feature…</option>${[...allMatches].map(([key, found]) => `<option value="${esc(key)}" ${S.net.matchKey === key ? 'selected' : ''}>${esc(C.describeShared([key], S.ctx, [n.paper])[0])} · ${plural(found.length, 'paper')}</option>`).join('')}</select></label>${S.net.matchKey ? `<p class="small muted">${plural(selectedMatches.length, 'matching paper')}</p>${selectedMatches.length ? miniPapers(selectedMatches, S.net.matchLimit) : '<p class="small muted">No other papers share this feature.</p>'}${selectedMatches.length > S.net.matchLimit ? `<button type="button" class="btn ghost small" data-net-all-more>Show more (${fmt(selectedMatches.length - S.net.matchLimit)} remaining)</button>` : ''}` : ''}</div>` : ''}
     ${pair.length ? `<div class="panel"><span class="kind">Papers combining</span><h3>${esc(prev._label)} + ${esc(n._label)}</h3>${miniPapers(pair, 6)}</div>` : ''}
     ${ties.length ? `<div class="panel"><span class="kind">${n.kind === 'paper' ? 'Linked papers and shared matches' : 'Ties · click one, then another to see papers combining them'}</span><ul class="tie-list">${ties.slice(0, 14).map(t => `<li><button type="button" data-select="${esc(t.other.id)}">${esc(t.other._label)}${t.why.length ? `<small class="shared">Shares: <strong>${esc(C.describeShared(t.why, S.ctx, [n.paper, t.other.paper].filter(Boolean)).join(', '))}</strong></small>` : ''}</button>${t.isNew ? '<span class="new-tag">NEW</span>' : ''}<span class="w">${S.prefs.lens === 'papers' ? '' : fmt(Math.round(t.w * 10) / 10)}</span></li>`).join('')}</ul></div>` : ''}
     ${authors.length ? `<div class="panel"><span class="kind">Most active authors here</span><ul class="tie-list">${authors.map(([name, c]) => `<li><span style="flex:1">${esc(name)}</span><span class="w">${c}</span></li>`).join('')}</ul></div>` : ''}
@@ -720,6 +725,7 @@ function onNetworkEvent(e) {
   const t = e.target;
   if (e.type === 'click') {
     const b = t.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-net-all-more')) { S.net.matchLimit += 30; sidePanel(); return; }
     if (b.dataset.lens) { S.prefs.lens = b.dataset.lens; savePrefs(); S.net.selected = null; stopPlay(); renderNetwork(); }
     else if (b.dataset.kindToggle) { const k = b.dataset.kindToggle; S.prefs.kinds[k] = !S.prefs.kinds[k]; if (!Object.values(S.prefs.kinds).some(Boolean)) S.prefs.kinds.field = true; savePrefs(); b.setAttribute('aria-pressed', String(!!S.prefs.kinds[k])); drawNetwork(); }
     else if (b.id === 'net-fit') S.network?.fit();
@@ -739,6 +745,7 @@ function onNetworkEvent(e) {
     if (t.id === 'net-min') { S.prefs.minEdge = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-topics') { S.prefs.maxTopics = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-max') { S.prefs.maxPapers = +t.value; savePrefs(); drawNetwork(); }
+    if (t.id === 'net-all-feature') { S.net.matchKey = t.value; S.net.matchLimit = 30; sidePanel(); }
     if (t.id === 'net-match') { S.prefs.match = t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-minauth') { S.prefs.minAuthorPapers = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-new') { S.prefs.highlight = t.value; savePrefs(); drawNetwork(); }

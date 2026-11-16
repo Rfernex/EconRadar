@@ -96,6 +96,15 @@ test('paper ties can be restricted to one kind of match, and say what is shared'
   assert.equal(C.normalizePaper({ id: 'X', title: 'T', doi: '10.1/x' }, ctx).url, 'https://doi.org/10.1/x');
 });
 
+test('all feature matches include papers beyond graph limits and common-feature cutoff', () => {
+  const list = Array.from({ length: 305 }, (_, i) => paper(`P${i}`, { methods: ['did'], topics: [i === 1 ? 'shared topic' : 'other'] }));
+  const matches = C.paperFeatureMatches(list[0], list, ctx, 'ident');
+  assert.equal(matches.get('m:did').length, 304);
+  assert.ok(!matches.get('m:did').some(p => p.id === list[0].id));
+  assert.equal(C.paperGraph(list, ctx, { match: 'ident', max: 300 }).links.length, 0);
+  assert.ok(!C.paperFeatureMatches(list[0], list, ctx, 'data').has('m:did'));
+});
+
 test('author graph and index tie authors to fields and co-authors', () => {
   const two = [{ n: 'Ada Lovelace', id: 'A1' }, { n: 'Grace Hopper', id: 'A2' }];
   const list = [paper('W1', { authors: two }), paper('W2', { authors: two, fields: ['econ-history', 'labour'] })];
