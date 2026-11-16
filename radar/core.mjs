@@ -114,6 +114,12 @@ export const activeFilterCount = f => ['families', 'fields', 'methods', 'data', 
 /** The paper's own date: publication date, or the day it was added when the index has none. */
 export const paperDate = p => p.published || p.added;
 
+/** Seven calendar days including today, using known publication dates only. */
+export function publishedThisWeek(papers, today = isoDay(Date.now())) {
+  const from = addDays(today, -6);
+  return papers.filter(p => p.published && p.published >= from && p.published <= today);
+}
+
 /** [from, to] on the paper's publication date; `to` is inclusive. Presets reach back from
  * today and leave the end open, so articles already dated to a coming issue stay in. */
 export function dateWindow(f, { today }) {

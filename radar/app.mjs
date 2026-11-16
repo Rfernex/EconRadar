@@ -1,4 +1,4 @@
-import * as C from './core.mjs?v=7';
+import * as C from './core.mjs?v=8';
 import { createNetwork } from './graph.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
@@ -16,6 +16,7 @@ const local = {
 };
 const ICONS = {
   latest: '<path d="M5 6h14M5 12h14M5 18h9"/>',
+  papers: '<path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/>',
   network: '<circle cx="6" cy="7" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="17" r="2.6"/><path d="M8.2 8.2l2.6 6.6M15.9 7.6l-2.7 7.3M8.4 6.8l7.2-.6"/>',
   authors: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.4 3-5.2 5.5-5.2s4.7 1.8 5.5 5.2"/><circle cx="17" cy="9" r="2.4"/><path d="M15.6 13.9c2.4-.3 4.2 1.2 4.9 4.1"/>',
   trends: '<path d="M4 19V5M4 19h16"/><path d="M7 15l4-4 3 3 5-6"/>',
@@ -23,12 +24,12 @@ const ICONS = {
   newsletter: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>',
   focus: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
 };
-const BASE_VIEWS = [['latest', 'Latest'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['newsletter', 'Newsletter'], ['sources', 'Sources']];
+const BASE_VIEWS = [['latest', 'Latest'], ['papers', 'Paper list'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['newsletter', 'Newsletter'], ['sources', 'Sources']];
 // The Focus tab (radar/focus.json) is personal: it shows only on devices where it was switched
 // on, by opening the app once at #focus. Nothing else in the app links to it.
 const FOCUS_KEY = 'radar.focus.v1';
 const focusOn = () => local.get(FOCUS_KEY, false) === true;
-const views = () => (focusOn() ? [...BASE_VIEWS.slice(0, 4), ['focus', 'Focus'], ...BASE_VIEWS.slice(4)] : BASE_VIEWS);
+const views = () => (focusOn() ? [...BASE_VIEWS.slice(0, 5), ['focus', 'Focus'], ...BASE_VIEWS.slice(5)] : BASE_VIEWS);
 let focusModule = null;
 
 const S = {
@@ -107,7 +108,7 @@ function loadAbstracts(year) {
 }
 
 function topCount() {
-  const n = S.visible.length;
+  const n = currentPaperList().length;
   $('#top-count').textContent = n === S.papers.length ? plural(n, 'paper') : `${fmt(n)} of ${plural(S.papers.length, 'paper')}`;
 }
 function refresh({ keepNetwork = false } = {}) {
@@ -225,13 +226,14 @@ function route() {
   const [view, ...rest] = location.hash.slice(1).split('/');
   if (view === 'focus' && !focusOn()) { local.set(FOCUS_KEY, true); renderNav(); }
   S.view = views().some(([k]) => k === view) || view === 'author' ? view : 'latest';
+  S.limit = 30;
   S.arg = decodeURIComponent(rest.join('/'));
   // #paper/<id> (links in the newsletter): the latest papers, with that paper open.
   if (view === 'paper' && S.arg) { const id = S.arg; S.arg = ''; setTimeout(() => openPaperWhenLoaded(id), 0); }
   if (S.view !== 'network' && S.network) { S.network.destroy(); S.network = null; stopPlay(); }
   if (S.view !== 'focus') { focusModule?.leave(); topCount(); }
   for (const a of $$('.nav-link')) a.classList.toggle('active', a.dataset.view === (S.view === 'author' ? 'authors' : S.view));
-  $('#crumb').textContent = { latest: 'LATEST PAPERS', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', newsletter: 'WEEKLY NEWSLETTER', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
+  $('#crumb').textContent = { latest: 'LATEST PAPERS', papers: 'PAPER LIBRARY', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', newsletter: 'WEEKLY NEWSLETTER', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
   $('#filter-bar').hidden = $('#filter-toggle').hidden = ['sources', 'focus', 'newsletter'].includes(S.view);
   render();
   $('#main').focus({ preventScroll: true });
@@ -244,6 +246,7 @@ function render(keepNetwork = false) {
   if (S.view === 'newsletter') return renderNewsletter();
   if (!S.papers.length && S.view !== 'sources') { main.innerHTML = emptyRadar(); return; }
   if (S.view === 'latest') main.innerHTML = latestHtml();
+  else if (S.view === 'papers') main.innerHTML = latestHtml(true);
   else if (S.view === 'network') renderNetwork(keepNetwork);
   else if (S.view === 'authors') { main.innerHTML = authorsHtml(); }
   else if (S.view === 'author') main.innerHTML = authorHtml(S.arg);
@@ -416,22 +419,49 @@ function sortPapers(list) {
 }
 
 // ---- Latest -------------------------------------------------------------------------
+function spotlightPosition(i, active, count) {
+  return i === active ? 'active' : count === 3 && i === (active + 2) % 3 ? 'previous' : 'next';
+}
 function latestSpotlight() {
   const papers = [...S.visible].sort(C.newestFirst).slice(0, 3);
   if (!papers.length) return '';
   const active = S.spotlight % papers.length;
-  return `<section class="spotlight" aria-label="Most recently added papers">
+  return `<section class="spotlight" aria-label="Most recently added papers" aria-roledescription="carousel">
     <div class="spotlight-head"><div><span class="eyebrow">Fresh from the radar</span><h2>Recently added</h2><p>The three most recently imported papers in your current view.</p></div>
-      <div class="spotlight-controls"><button type="button" data-act="spotlight-prev" aria-label="Previous paper" ${papers.length < 2 ? 'disabled' : ''}>←</button><span aria-live="polite">${active + 1} / ${papers.length}</span><button type="button" data-act="spotlight-next" aria-label="Next paper" ${papers.length < 2 ? 'disabled' : ''}>→</button></div></div>
-    <div class="spotlight-deck">${papers.map((p, i) => {
-      const position = papers.length === 3 ? (i === active ? 'active' : i === (active + 1) % 3 ? 'next' : 'previous') : i === active ? 'active' : 'next';
-      return `<article class="spotlight-card ${position}" data-spotlight-index="${i}"><span class="spotlight-index">0${i + 1} <span>· ${esc(journalShort(p.journal))}</span></span><h3>${esc(p.title)}</h3><p class="spotlight-authors">${esc(p.authors.map(a => a.n).slice(0, 3).join(' · '))}${p.authors.length > 3 ? ' et al.' : ''}</p><p class="spotlight-excerpt">${esc(p.q || p.summary || 'Open the paper for details.')}</p><div class="spotlight-bottom"><span>Added ${dayLabel(p.added)}</span><button type="button" data-open="${esc(p.id)}">View paper ↗</button></div></article>`;
-    }).join('')}</div></section>`;
+      <div class="spotlight-controls"><button type="button" data-act="spotlight-prev" aria-label="Previous paper" ${papers.length < 2 ? 'disabled' : ''}>←</button><span class="spotlight-count" aria-live="polite">${active + 1} / ${papers.length}</span><button type="button" data-act="spotlight-next" aria-label="Next paper" ${papers.length < 2 ? 'disabled' : ''}>→</button></div></div>
+    <div class="spotlight-deck" tabindex="0" aria-label="Featured papers. Use left and right arrow keys to browse.">${papers.map((p, i) => {
+      const position = spotlightPosition(i, active, papers.length);
+      return `<article class="spotlight-card ${position}" data-spotlight-index="${i}" aria-roledescription="slide" aria-label="${i + 1} of ${papers.length}" aria-hidden="${i !== active}">
+        <button class="spotlight-pick" type="button" data-act="spotlight-select" data-index="${i}" tabindex="-1" aria-label="Select paper ${i + 1}"></button>
+        <div class="spotlight-face" ${i !== active ? 'inert' : ''}><span class="spotlight-index">0${i + 1} <span>· ${esc(journalShort(p.journal))}</span></span><h3>${esc(p.title)}</h3><p class="spotlight-authors">${esc(p.authors.map(a => a.n).slice(0, 3).join(' · '))}${p.authors.length > 3 ? ' et al.' : ''}</p><p class="spotlight-excerpt">${esc(p.q || p.summary || 'Open the paper for details.')}</p><div class="spotlight-bottom"><span>Added ${dayLabel(p.added)}<br>Published ${p.published ? dayLabel(p.published) : 'date unavailable'}</span><button type="button" data-open="${esc(p.id)}">View paper ↗</button></div></div></article>`;
+    }).join('')}</div>
+    <div class="spotlight-foot"><span>Use the arrows, select a side card, or swipe to explore</span><div class="spotlight-dots" aria-label="Choose featured paper">${papers.map((p, i) => `<button type="button" data-act="spotlight-select" data-index="${i}" aria-label="Show paper ${i + 1}: ${esc(p.title)}" aria-pressed="${i === active}"></button>`).join('')}</div></div></section>`;
 }
-function latestHtml() {
-  const list = sortPapers(S.visible), shown = list.slice(0, S.limit);
+function moveSpotlight(step, index) {
+  const section = $('.spotlight');
+  if (!section) return;
+  const cards = $$('.spotlight-card', section), count = cards.length;
+  S.spotlight = index ?? (S.spotlight + step + count) % count;
+  // Keep the actual cards in the DOM so their transforms interpolate through space.
+  cards.forEach((card, i) => {
+    const active = i === S.spotlight;
+    if (!active && card.contains(document.activeElement)) $('.spotlight-deck', section).focus({ preventScroll: true });
+    card.className = 'spotlight-card ' + spotlightPosition(i, S.spotlight, count);
+    card.setAttribute('aria-hidden', String(!active));
+    const face = $('.spotlight-face', card);
+    face.inert = !active;
+    face.removeAttribute('style');
+  });
+  $('.spotlight-count', section).textContent = `${S.spotlight + 1} / ${count}`;
+  $$('.spotlight-dots button', section).forEach((b, i) => b.setAttribute('aria-pressed', String(i === S.spotlight)));
+}
+function currentPaperList() {
+  return S.view === 'latest' ? C.publishedThisWeek(S.visible, S.today) : S.visible;
+}
+function latestHtml(library = false) {
+  const list = sortPapers(library ? S.visible : C.publishedThisWeek(S.visible, S.today)), shown = list.slice(0, S.limit);
   const sinceVisit = S.prevVisit ? S.papers.filter(isNewToYou).length : 0;
-  const modelShare = S.visible.length ? S.visible.filter(C.byModel).length / S.visible.length : 0;
+  const modelShare = list.length ? list.filter(C.byModel).length / list.length : 0;
   // One chip per day: several runs on the same day (a backfill, a manual re-run) are one update.
   const byDay = new Map();
   for (const r of S.index.runs || []) { const day = r.at.slice(0, 10); byDay.set(day, (byDay.get(day) || 0) + (r.added || 0)); }
@@ -448,21 +478,22 @@ function latestHtml() {
     body += paperCard(p);
   }
   if (S.prefs.sort === 'added' && body) body += '</div>'; else body = `<div class="papers">${body}</div>`;
-  return `<div class="heading"><div><span class="eyebrow">${S.lastRun ? 'Updated ' + dayLabel(S.lastRun) : 'EconRadar'}</span><h1>Latest papers</h1>
-      <p>New articles from ${S.config.journals.filter(j => j.enabled !== false && j.kind !== 'working').length} journals${S.config.journals.some(j => j.enabled !== false && j.kind === 'working') ? ' and ' + S.config.journals.filter(j => j.enabled !== false && j.kind === 'working').map(j => j.short.replace(/ WP$/, '')).join(', ') + ' working papers' : ''}, each with its research question, a summary, and tags for field, method and data. Click any tag to filter by it.</p></div>
+  return `<div class="heading"><div><span class="eyebrow">${S.lastRun ? 'Updated ' + dayLabel(S.lastRun) : 'EconRadar'}</span><h1>${library ? 'Paper list' : 'Latest papers'}</h1>
+      <p>${library ? 'Browse the full library of articles from' : 'This week’s publications from'} ${S.config.journals.filter(j => j.enabled !== false && j.kind !== 'working').length} journals${S.config.journals.some(j => j.enabled !== false && j.kind === 'working') ? ' and ' + S.config.journals.filter(j => j.enabled !== false && j.kind === 'working').map(j => j.short.replace(/ WP$/, '')).join(', ') + ' working papers' : ''}, each with its research question, a summary, and tags for field, method and data. Click any tag to filter by it.</p></div>
       <div class="toolbar"><select id="sort" aria-label="Sort papers">${[['added', 'Date added'], ['published', 'Publication date'], ['journal', 'Journal']].map(([v, l]) => `<option value="${v}" ${S.prefs.sort === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="export" aria-label="Export these papers"><option value="">Export…</option><option value="bib">BibTeX</option><option value="ris">RIS (Zotero)</option><option value="csv">CSV</option></select></div></div>
-    <div class="stats"><div class="stat"><strong>${fmt(S.visible.length)}</strong><span>papers in view</span></div>
+    <div class="stats"><div class="stat"><strong>${fmt(list.length)}</strong><span>${library ? 'papers in view' : 'published in the past 7 days'}</span></div>
       <div class="stat"><strong>${fmt(sinceVisit)}</strong><span>new since your last visit${S.prevVisit ? ' (' + dayLabel(S.prevVisit, { day: 'numeric', month: 'short' }) + ')' : ''}</span></div>
       <div class="stat"><strong>${pct(modelShare)}</strong><span>summarised by the model; the rest are auto-extracted</span></div>
-      <div class="stat"><strong>${fmt(new Set(S.visible.map(p => p.journal)).size)}</strong><span>journals represented</span></div></div>
-    ${runs.length > 1 ? `<div class="chips" aria-label="Recent updates">${runs.map(r => `<button type="button" class="chip btnish" data-act="run" data-day="${r.at.slice(0, 10)}" aria-pressed="${S.filters.run === r.at.slice(0, 10)}" title="Papers added in this update">${dayLabel(r.at.slice(0, 10), { day: 'numeric', month: 'short' })} · ${plural(r.added, 'paper')}</button>`).join('')}</div>` : ''}
-    ${latestSpotlight()}
-    ${shown.length ? body : '<div class="empty"><h2>Nothing matches these filters</h2><p>Loosen a filter above, or clear them all.</p></div>'}
+      <div class="stat"><strong>${fmt(new Set(list.map(p => p.journal)).size)}</strong><span>journals represented</span></div></div>
+    ${library && runs.length > 1 ? `<div class="chips" aria-label="Recent updates">${runs.map(r => `<button type="button" class="chip btnish" data-act="run" data-day="${r.at.slice(0, 10)}" aria-pressed="${S.filters.run === r.at.slice(0, 10)}" title="Papers added in this update">${dayLabel(r.at.slice(0, 10), { day: 'numeric', month: 'short' })} · ${plural(r.added, 'paper')}</button>`).join('')}</div>` : ''}
+    ${library ? '' : latestSpotlight()}
+    <div class="section-head"><div><h2>${library ? 'All papers' : 'Published in the last 7 days'}</h2>${library ? '' : `<p class="small muted">${dayLabel(C.addDays(S.today, -6))} – ${dayLabel(S.today)} · ${plural(list.length, 'paper')}</p>`}</div>${library ? '' : '<a href="#papers">Browse the full paper library →</a>'}</div>
+    ${shown.length ? body : `<div class="empty"><h2>${library ? 'Nothing matches these filters' : 'No publications in the last 7 days'}</h2><p>${library ? 'Loosen a filter above, or clear them all.' : 'No papers match this publication window and your filters. <a href="#papers">Browse the full library</a> for earlier publications.'}</p></div>`}
     ${list.length > shown.length ? `<div class="load-more"><button type="button" class="btn ghost" data-act="more">Show ${Math.min(30, list.length - shown.length)} more of ${fmt(list.length - shown.length)}</button></div>` : ''}`;
 }
 
-function exportPapers(kind, list = sortPapers(S.visible)) {
+function exportPapers(kind, list = sortPapers(currentPaperList())) {
   if (!list.length) return toast('Nothing to export.');
   const stamp = S.today;
   if (kind === 'bib') download(`econradar-${stamp}.bib`, list.map(p => C.toBibtex(p, S.ctx)).join('\n\n'), 'application/x-bibtex');
@@ -526,13 +557,8 @@ function onMainClick(e) {
   if (t.dataset.goto) { location.hash = t.dataset.goto; return; }
   if (t.dataset.nlFam) { const list = nlFamilies(), k = t.dataset.nlFam; S.prefs.nlFamilies = list.includes(k) ? list.filter(x => x !== k) : [...list, k]; savePrefs(); renderNewsletter(); return; }
   const card = t.closest('[data-id]'), id = card?.dataset.id, act = t.dataset.act;
-  if (act === 'spotlight-prev' || act === 'spotlight-next') {
-    const count = Math.min(3, S.visible.length);
-    if (!count) return;
-    S.spotlight = (S.spotlight + (act === 'spotlight-next' ? 1 : -1) + count) % count;
-    const section = t.closest('.spotlight');
-    section.outerHTML = latestSpotlight();
-    document.querySelector(`[data-act="${act}"]`)?.focus();
+  if (act === 'spotlight-prev' || act === 'spotlight-next' || act === 'spotlight-select') {
+    moveSpotlight(act === 'spotlight-next' ? 1 : -1, act === 'spotlight-select' ? Number(t.dataset.index) : undefined);
     return;
   }
   if (act === 'open') openPaper(id);
@@ -546,7 +572,7 @@ function onMainClick(e) {
   else if (act === 'author') { $('#dialog').open && $('#dialog').close(); location.hash = 'author/' + encodeURIComponent(t.dataset.key); }
   else if (act === 'tag') { $('#dialog').open && $('#dialog').close(); setFilter(f => { if (!f[t.dataset.kind].includes(t.dataset.key)) f[t.dataset.kind].push(t.dataset.key); }); toast(`Filtered by ${t.textContent.trim()}`); }
   else if (act === 'search') { setFilter(f => { f.q = t.dataset.q; }); toast(`Searching “${t.dataset.q}”`); }
-  else if (act === 'more') { S.limit += 30; const y = window.scrollY; $('#main').innerHTML = latestHtml(); window.scrollTo(0, y); }
+  else if (act === 'more') { S.limit += 30; const y = window.scrollY; $('#main').innerHTML = latestHtml(S.view === 'papers'); window.scrollTo(0, y); }
   else if (act === 'run') setFilter(f => { f.run = f.run === t.dataset.day ? '' : t.dataset.day; });
   else if (act === 'cite') { const p = S.papers.find(x => x.id === id); navigator.clipboard?.writeText(C.toBibtex(p, S.ctx)).then(() => toast('BibTeX copied.'), () => toast('Copy failed; use Export instead.')); }
   else if (act === 'in-network') { $('#dialog').close(); S.prefs.lens = 'papers'; savePrefs(); S.net.pending = id; location.hash = 'network'; if (S.view === 'network') renderNetwork(); }
@@ -729,8 +755,8 @@ function onNetworkEvent(e) {
     if (b.dataset.lens) { S.prefs.lens = b.dataset.lens; savePrefs(); S.net.selected = null; stopPlay(); renderNetwork(); }
     else if (b.dataset.kindToggle) { const k = b.dataset.kindToggle; S.prefs.kinds[k] = !S.prefs.kinds[k]; if (!Object.values(S.prefs.kinds).some(Boolean)) S.prefs.kinds.field = true; savePrefs(); b.setAttribute('aria-pressed', String(!!S.prefs.kinds[k])); drawNetwork(); }
     else if (b.id === 'net-fit') S.network?.fit();
-    else if (b.dataset.netFilter) { setFilter(f => { if (!f[b.dataset.netFilter].includes(b.dataset.key)) f[b.dataset.netFilter].push(b.dataset.key); }); location.hash = 'latest'; }
-    else if (b.dataset.netSearch) { setFilter(f => { f.q = b.dataset.netSearch; }); location.hash = 'latest'; }
+    else if (b.dataset.netFilter) { setFilter(f => { if (!f[b.dataset.netFilter].includes(b.dataset.key)) f[b.dataset.netFilter].push(b.dataset.key); }); location.hash = 'papers'; }
+    else if (b.dataset.netSearch) { setFilter(f => { f.q = b.dataset.netSearch; }); location.hash = 'papers'; }
     else if (b.id === 'net-play') {
       if (S.playing) return stopPlay();
       if (S.net.step >= S.net.steps.length - 1) S.net.step = 0;
@@ -934,7 +960,7 @@ function sourcesHtml() {
 // ---- wiring -------------------------------------------------------------------------
 function bindMain() {
   const main = $('#main');
-  main.addEventListener('click', e => { onMainClick(e); if (S.view === 'network') onNetworkEvent(e); if (S.view === 'trends') onTrendsClick(e); if (e.target.id === 'author-filter') { setFilter(f => { if (!f.authors.includes(e.target.dataset.key)) f.authors.push(e.target.dataset.key); }); location.hash = 'latest'; } });
+  main.addEventListener('click', e => { onMainClick(e); if (S.view === 'network') onNetworkEvent(e); if (S.view === 'trends') onTrendsClick(e); if (e.target.id === 'author-filter') { setFilter(f => { if (!f.authors.includes(e.target.dataset.key)) f.authors.push(e.target.dataset.key); }); location.hash = 'papers'; } });
   main.addEventListener('change', e => {
     if (S.view === 'network') onNetworkEvent(e);
     if (e.target.id === 'sort') { S.prefs.sort = e.target.value; savePrefs(); render(); }
@@ -944,6 +970,37 @@ function bindMain() {
     if (e.target.id === 'import-file') importUser(e.target.files[0]);
   });
   main.addEventListener('input', e => { if (S.view === 'network' && e.target.id === 'net-step') onNetworkEvent(e); });
+  main.addEventListener('keydown', e => {
+    if (!e.target.closest('.spotlight') || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    e.preventDefault(); moveSpotlight(e.key === 'ArrowRight' ? 1 : -1);
+  });
+  let swipe = null;
+  main.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' && e.target.closest('.spotlight-deck')) swipe = { x: e.clientX, y: e.clientY, id: e.pointerId };
+  });
+  main.addEventListener('pointerup', e => {
+    if (!swipe || swipe.id !== e.pointerId) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    swipe = null;
+    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) moveSpotlight(dx < 0 ? 1 : -1);
+  });
+  main.addEventListener('pointercancel', () => { swipe = null; });
+  main.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const card = e.target.closest('.spotlight-card.active');
+    if (!card) return;
+    const rect = card.getBoundingClientRect(), face = $('.spotlight-face', card);
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    face.style.setProperty('--tilt-x', `${(0.5 - y) * 12}deg`);
+    face.style.setProperty('--tilt-y', `${(x - 0.5) * 16}deg`);
+    face.style.setProperty('--shine-x', `${x * 100}%`);
+    face.style.setProperty('--shine-y', `${y * 100}%`);
+  });
+  main.addEventListener('pointerout', e => {
+    const card = e.target.closest('.spotlight-card');
+    if (card && !card.contains(e.relatedTarget)) $('.spotlight-face', card).removeAttribute('style');
+  });
   // Chart tooltips.
   main.addEventListener('pointermove', e => { const t = e.target.closest('[data-tip]'); if (t) showTip(t.dataset.tip, e.clientX, e.clientY); else if (!e.target.closest('.net-stage')) hideTip(); });
   main.addEventListener('pointerleave', hideTip);
@@ -955,7 +1012,7 @@ function bindMain() {
     if (v) S.user.notes[id] = e.target.value.slice(0, 4000); else delete S.user.notes[id];
     saveUser();
   });
-  dialog.addEventListener('close', () => { if (S.view === 'latest' || S.view === 'author') { const y = window.scrollY; render(); window.scrollTo(0, y); } });
+  dialog.addEventListener('close', () => { if (S.view === 'latest' || S.view === 'papers' || S.view === 'author') { const y = window.scrollY; render(); window.scrollTo(0, y); } });
 }
 function onTrendsClick(e) {
   const b = e.target.closest('button'); if (!b) return;

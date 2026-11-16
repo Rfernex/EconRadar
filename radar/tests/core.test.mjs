@@ -154,7 +154,7 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v14'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v15'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
@@ -169,4 +169,17 @@ test('the flag link pre-fills the Google Form with the paper, and only a Google 
   assert.equal(C.flagUrl(form, p), 'https://docs.google.com/forms/d/e/abc/viewform?usp=pp_url&entry.1=W1&entry.2=Wages%20%26%20Jobs');
   assert.equal(C.flagUrl('', p), '');
   assert.equal(C.flagUrl('https://evil.example/?x=PAPERID', p), '');
+});
+
+test('Latest includes seven calendar publication days, excluding future, old, and unknown dates', () => {
+  const papers = [
+    paper('today', { published: '2026-11-16' }),
+    paper('boundary', { published: '2026-11-10' }),
+    paper('old', { published: '2026-11-09', added: '2026-11-16' }),
+    paper('future', { published: '2026-11-17' }),
+    paper('unknown', { published: '', added: '2026-11-16' }),
+  ];
+  assert.deepEqual(C.publishedThisWeek(papers, '2026-11-16').map(p => p.id), ['today', 'boundary']);
+  assert.equal(papers.length, 5, 'the full library is unchanged');
+  assert.deepEqual(C.publishedThisWeek([paper('newyear', { published: '2025-12-27' })], '2026-01-02').map(p => p.id), ['newyear']);
 });
