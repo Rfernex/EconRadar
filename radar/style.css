@@ -254,3 +254,14 @@ dialog::backdrop{background:#0d16188a;backdrop-filter:blur(3px)}.dialog-close{di
 @media(max-width:1000px){.spotlight-card{width:64%}.spotlight-face{padding:21px}.spotlight-card.previous{transform:translateX(-53%) translateZ(-210px) rotateY(36deg) rotateZ(-4deg)}.spotlight-card.next{transform:translateX(53%) translateZ(-210px) rotateY(-36deg) rotateZ(4deg)}}
 @media(max-width:700px){.spotlight{padding:18px 12px}.spotlight-head{align-items:start;gap:8px;padding:0 4px}.spotlight-head h2{font-size:24px}.spotlight-head p{max-width:210px}.spotlight-controls{gap:7px}.spotlight-controls button{width:36px;height:36px}.spotlight-card{width:80%}.spotlight-deck{padding:38px 0 46px;perspective:1000px}.spotlight-card.active{transform:translateZ(20px)}.spotlight-face{padding:18px;min-height:320px}.spotlight-card h3{font-size:22px;transform:translateZ(16px)}.spotlight-index,.spotlight-authors,.spotlight-excerpt,.spotlight-bottom{transform:translateZ(10px)}.spotlight-bottom{gap:6px}.spotlight-bottom button{font-size:11px;padding:8px}.spotlight-foot>span{max-width:205px}.section-head{flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){.spotlight-card,.spotlight-face,.spotlight-dots button:after,.spotlight-controls button{transition:none}.spotlight-face{transform:none}}
+/* Author picker count and "show more"; author table pager */
+.pick-count{margin:-2px 2px 6px;font-size:11px}
+.pick-more{display:block;width:100%;margin-top:6px;padding:8px 4px;text-align:center}
+.pager{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.pager .pager-info{margin:0 8px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}.pager .pager-info b{color:var(--ink);font-weight:650}
+.pager button[disabled]{opacity:.35;cursor:default}
+#author-table.page-turn tbody{animation:page-in .28s ease}
+#author-table.page-turn.from-left tbody{--page-dx:-14px}
+@keyframes page-in{from{opacity:0;transform:translateX(var(--page-dx,14px))}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){#author-table.page-turn tbody{animation:none}}
+.pick[data-pick="authors"] .pick-panel{left:auto;right:0}

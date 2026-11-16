@@ -87,6 +87,9 @@ async function load() {
     S.shardData.push(...rest);
     absorb();
     S.loadingRest = null;
+    // The author picker was built from the first year only: rebuild it with everyone
+    S.authorPick = null;
+    if ($('#f-author-list')) renderAuthorOptions($('#f-author-q')?.value || '');
     refresh({ keepNetwork: S.view === 'network' });
     sideStatus();
   }) : null;
@@ -139,7 +142,7 @@ function renderFilters() {
     <select id="f-period" aria-label="Publication date">${[['all', 'Published: any time'], ['7d', 'Published: past 7 days'], ['30d', 'Published: past 30 days'], ['90d', 'Published: past 3 months'], ['180d', 'Published: past 6 months'], ['365d', 'Published: past year'], ['custom', 'Published between…']].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
     <span id="f-custom" class="toolbar" hidden><input type="date" id="f-from" aria-label="Published from"><input type="date" id="f-to" aria-label="Published until"></span>
     ${pickerHtml('fields', 'Field', fieldGroups)}${pickerHtml('methods', 'Method', methodGroups)}${pickerHtml('data', 'Data', dataGroups)}${pickerHtml('journals', 'Source', journalGroups)}
-    <details class="pick" data-pick="authors"><summary>Author <b hidden></b></summary><div class="pick-panel"><input type="search" placeholder="Type a name…" aria-label="Find an author" id="f-author-q"><div id="f-author-list"></div></div></details>
+    <details class="pick" data-pick="authors"><summary>Author <b hidden></b></summary><div class="pick-panel"><input type="search" placeholder="Type a name…" aria-label="Find an author" id="f-author-q"><p class="small muted pick-count" id="f-author-count"></p><div id="f-author-list"></div></div></details>
     <button type="button" class="btn ghost small" data-toggle="saved" aria-pressed="false">★ Saved</button>
     <button type="button" class="btn ghost small" data-toggle="unread" aria-pressed="false">Unread</button>
     <button type="button" class="btn ghost small" data-toggle="followed" aria-pressed="false">Followed authors</button>
@@ -147,13 +150,33 @@ function renderFilters() {
     <button type="button" class="text-btn" id="f-clear">Clear all</button>
   </div><div class="active-filters" id="active-filters"></div>`;
   renderAuthorOptions('');
+  // The author list grows as you scroll it (every author in the radar is reachable)
+  $('[data-pick="authors"] .pick-panel').addEventListener('scroll', e => {
+    const p = e.currentTarget, st = S.authorPick;
+    if (st && st.shown < st.list.length && p.scrollTop + p.clientHeight > p.scrollHeight - 120) renderAuthorOptions(st.q, true);
+  });
 }
 
-function renderAuthorOptions(q) {
-  const terms = C.queryTerms(q);
-  const list = [...S.allAuthors.values()].filter(a => terms.every(t => C.fold(a.name).includes(t)))
-    .sort((a, b) => b.papers.length - a.papers.length || a.name.localeCompare(b.name)).slice(0, 14);
-  $('#f-author-list').innerHTML = list.length ? list.map(a => `<label class="pick-opt"><input type="checkbox" data-filter="authors" value="${esc(a.key)}" ${S.filters.authors.includes(a.key) ? 'checked' : ''}><span>${esc(a.name)}<small class="muted"> ${esc(a.inst)}</small></span><span class="n">${a.papers.length}</span></label>`).join('') : '<p class="muted small">No author by that name.</p>';
+// Author picker: every author matching the search, selected ones first, then by number of
+// papers; rendered AUTHOR_STEP at a time so the list stays fast with tens of thousands of names.
+const AUTHOR_STEP = 60;
+function renderAuthorOptions(q, more = false) {
+  const box = $('#f-author-list');
+  let st = S.authorPick;
+  if (!more || !st || st.q !== q) {
+    const terms = C.queryTerms(q), sel = new Set(S.filters.authors);
+    const list = [...S.allAuthors.values()].filter(a => terms.every(t => C.fold(a.name).includes(t)))
+      .sort((a, b) => (sel.has(b.key) - sel.has(a.key)) || b.papers.length - a.papers.length || a.name.localeCompare(b.name));
+    st = S.authorPick = { q, list, shown: 0 };
+    box.innerHTML = '';
+    $('#f-author-count').textContent = list.length ? `${fmt(list.length)} ${q ? 'matching ' : ''}author${list.length === 1 ? '' : 's'}${q ? '' : ' · type to search'}` : '';
+  }
+  if (!st.list.length) { box.innerHTML = '<p class="muted small">No author by that name.</p>'; return; }
+  const next = st.list.slice(st.shown, st.shown + AUTHOR_STEP);
+  st.shown += next.length;
+  box.querySelector('.pick-more')?.remove();
+  box.insertAdjacentHTML('beforeend', next.map(a => `<label class="pick-opt"><input type="checkbox" data-filter="authors" value="${esc(a.key)}" ${S.filters.authors.includes(a.key) ? 'checked' : ''}><span>${esc(a.name)}<small class="muted"> ${esc(a.inst)}</small></span><span class="n">${a.papers.length}</span></label>`).join('')
+    + (st.shown < st.list.length ? `<button type="button" class="text-btn pick-more" id="f-author-more">Show more · ${fmt(st.list.length - st.shown)} left</button>` : ''));
 }
 
 function updateFilterUI() {
@@ -210,6 +233,7 @@ function bindFilters() {
     if (t.dataset.toggle) setFilter(f => { f[t.dataset.toggle] = !f[t.dataset.toggle]; });
     else if (t.dataset.family) setFilter(f => toggleIn(f.families, t.dataset.family));
     else if (t.dataset.remove) setFilter(f => { const k = t.dataset.remove; if (k === 'q') f.q = ''; else if (k === 'period') f.period = 'all'; else if (k === 'run') f.run = ''; else toggleIn(f[k], t.dataset.value); });
+    else if (t.id === 'f-author-more') renderAuthorOptions(S.authorPick?.q || '', true);
     else if (t.id === 'f-clear') setFilter(f => Object.assign(f, C.EMPTY_FILTERS, { families: [], fields: [], methods: [], data: [], journals: [], authors: [] }));
   });
   // One open picker at a time; click outside closes it.
@@ -578,6 +602,7 @@ function onMainClick(e) {
   else if (act === 'in-network') { $('#dialog').close(); S.prefs.lens = 'papers'; savePrefs(); S.net.pending = id; location.hash = 'network'; if (S.view === 'network') renderNetwork(); }
   else if (act === 'follow') { const k = t.dataset.key, on = !S.user.follow[k]; if (on) S.user.follow[k] = S.today; else delete S.user.follow[k]; saveUser(); t.setAttribute('aria-pressed', String(on)); t.textContent = on ? '★ Following' : '☆ Follow'; toast(on ? 'Following — their new papers are marked in Latest.' : 'Unfollowed.'); }
   else if (act === 'author-sort') { S.prefs.authorSort = t.dataset.value; savePrefs(); $('#main').innerHTML = authorsHtml(); }
+  else if (act === 'author-page') turnAuthorPage(t.dataset.value);
   else if (act === 'export-user') download(`econradar-personal-${S.today}.json`, JSON.stringify(S.user, null, 1), 'application/json');
   else if (act === 'import-user') $('#import-file')?.click();
   else if (act === 'export-all') exportPapers(t.dataset.kind, sortPapers(S.papers));
@@ -803,20 +828,46 @@ function authorsHtml() {
   const fams = S.config.families.filter(f => heatRows.some(a => familyCounts(a)[f.key]));
   const level = v => (v <= 0 ? '' : v === 1 ? 'l1' : v === 2 ? 'l2' : v === 3 ? 'l3' : v <= 5 ? 'l4' : v <= 8 ? 'l5' : 'l6');
   const sortBtn = (v, l) => `<button type="button" data-act="author-sort" data-value="${v}" aria-pressed="${S.prefs.authorSort === v}">${l}</button>`;
-  const rows = list.slice(0, 80).map(a => {
-    const fields = C.ranked(a.fields, 2).map(([k]) => `<span class="chip">${fieldDot(k)}${esc(S.ctx.label('field', k))}</span>`).join(' ');
-    const methods = C.ranked(a.methods, 2).map(([k]) => esc(S.ctx.label('method', k))).join(', ');
-    return `<tr><td><button type="button" class="link" data-goto="author/${encodeURIComponent(a.key)}">${esc(a.name)}</button>${S.user.follow[a.key] ? ' <span class="badge auto">FOLLOWING</span>' : ''}<br><small class="muted">${esc(a.inst)}</small></td>
-      <td class="num">${a.papers.length}</td><td>${fields}</td><td class="small">${methods}</td><td class="small">${C.ranked(a.journals, 3).map(([k]) => esc(journalShort(k))).join(', ')}</td><td class="small nowrap">${dayLabel(a.last, { month: 'short', year: 'numeric' })}</td></tr>`;
-  }).join('');
+  // Back to the first page whenever the list itself changes (filters, sort)
+  const sig = `${S.prefs.authorSort}|${list.length}|${list[0]?.key || ''}`;
+  if (sig !== S.authorSig) { S.authorSig = sig; S.authorPage = 0; }
+  S.authorList = list;
   return `<div class="heading"><div><h1>Who publishes on what</h1><p>${plural(index.size, 'author')} in the papers in view. Authors are matched by their OpenAlex id, so namesakes stay apart. Follow someone to have their new papers marked in Latest${followedN ? ` (you follow ${followedN})` : ''}.</p></div>
       <div class="seg" role="group" aria-label="Sort authors">${sortBtn('papers', 'Most papers')}${sortBtn('rising', 'Active last 90 days')}${sortBtn('recent', 'Most recent')}${sortBtn('name', 'A–Z')}</div></div>
     <div class="panel" style="margin-bottom:16px"><span class="eyebrow">Activity by field family · top ${heatRows.length} authors</span>
       <div class="table-scroll"><table class="heat"><thead><tr><th></th>${fams.map(f => `<th title="${esc(f.label)}"><i class="dot" style="background:${famVar(f.key)}"></i><br>${esc(f.label.split(/[ ,&]/)[0])}</th>`).join('')}</tr></thead>
       <tbody>${heatRows.map(a => { const c = familyCounts(a); return `<tr><th class="row" scope="row"><button type="button" data-goto="author/${encodeURIComponent(a.key)}">${esc(a.name)}</button></th>${fams.map(f => `<td class="${level(c[f.key] || 0)}" title="${esc(a.name)} · ${esc(f.label)}: ${c[f.key] || 0} paper(s)">${c[f.key] || ''}</td>`).join('')}</tr>`; }).join('')}</tbody></table></div>
       <p class="small muted" style="margin-top:8px">Darker cells mean more papers in that family (a paper counts once per family it touches).</p></div>
-    <div class="panel table-scroll"><table class="data"><thead><tr><th>Author</th><th class="num">Papers</th><th>Main fields</th><th>Main methods</th><th>Journals</th><th>Latest</th></tr></thead><tbody>${rows}</tbody></table>
-      ${list.length > 80 ? `<p class="small muted" style="margin-top:10px">Showing 80 of ${fmt(list.length)}. Narrow with the filters or the author search above.</p>` : ''}</div>`;
+    ${authorTableHtml()}`;
+}
+// The full author list, AUTHOR_PAGE rows at a time, with arrows to move between pages.
+const AUTHOR_PAGE = 50;
+function authorTableHtml() {
+  const list = S.authorList || [], pages = Math.max(1, Math.ceil(list.length / AUTHOR_PAGE));
+  S.authorPage = Math.min(Math.max(0, S.authorPage || 0), pages - 1);
+  const page = S.authorPage, start = page * AUTHOR_PAGE, slice = list.slice(start, start + AUTHOR_PAGE);
+  const rows = slice.map((a, i) => {
+    const fields = C.ranked(a.fields, 2).map(([k]) => `<span class="chip">${fieldDot(k)}${esc(S.ctx.label('field', k))}</span>`).join(' ');
+    const methods = C.ranked(a.methods, 2).map(([k]) => esc(S.ctx.label('method', k))).join(', ');
+    return `<tr><td class="num muted small">${fmt(start + i + 1)}</td><td><button type="button" class="link" data-goto="author/${encodeURIComponent(a.key)}">${esc(a.name)}</button>${S.user.follow[a.key] ? ' <span class="badge auto">FOLLOWING</span>' : ''}<br><small class="muted">${esc(a.inst)}</small></td>
+      <td class="num">${a.papers.length}</td><td>${fields}</td><td class="small">${methods}</td><td class="small">${C.ranked(a.journals, 3).map(([k]) => esc(journalShort(k))).join(', ')}</td><td class="small nowrap">${dayLabel(a.last, { month: 'short', year: 'numeric' })}</td></tr>`;
+  }).join('');
+  const btn = (v, label, aria, off) => `<button type="button" class="btn ghost small" data-act="author-page" data-value="${v}" aria-label="${aria}"${off ? ' disabled' : ''}>${label}</button>`;
+  const pager = pages > 1 ? `<nav class="pager" aria-label="Author pages">${btn('first', '«', 'First page', page === 0)}${btn('prev', '‹ Previous', 'Previous page', page === 0)}
+      <span class="pager-info" aria-live="polite"><b>${fmt(start + 1)}–${fmt(start + slice.length)}</b> of ${fmt(list.length)} · page ${fmt(page + 1)} of ${fmt(pages)}</span>
+      ${btn('next', 'Next ›', 'Next page', page >= pages - 1)}${btn('last', '»', 'Last page', page >= pages - 1)}</nav>` : '';
+  return `<div class="panel" id="author-table"><div class="table-scroll"><table class="data"><thead><tr><th class="num">#</th><th>Author</th><th class="num">Papers</th><th>Main fields</th><th>Main methods</th><th>Journals</th><th>Latest</th></tr></thead><tbody>${rows}</tbody></table></div>${pager}</div>`;
+}
+function turnAuthorPage(v) {
+  const pages = Math.max(1, Math.ceil((S.authorList || []).length / AUTHOR_PAGE));
+  S.authorPage = v === 'first' ? 0 : v === 'last' ? pages - 1 : (S.authorPage || 0) + (v === 'next' ? 1 : -1);
+  const old = $('#author-table'); if (!old) return;
+  old.outerHTML = authorTableHtml();
+  const box = $('#author-table');
+  box.classList.add('page-turn', v === 'prev' || v === 'first' ? 'from-left' : 'from-right');
+  if (box.getBoundingClientRect().top < 0) box.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  const again = $(`#author-table [data-value="${v}"]:not([disabled])`) || $('#author-table .pager button:not([disabled])');
+  again?.focus({ preventScroll: true });
 }
 function bars(entries, color, labelOf, max = Math.max(1, ...entries.map(e => e[1]))) {
   return `<div class="bars">${entries.map(([k, v]) => `<div class="bar-row"><span title="${esc(labelOf(k))}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(labelOf(k))}</span><span class="track"><span class="fill" style="width:${(v / max) * 100}%;background:${color(k)}"></span></span><span class="n">${Math.round(v * 10) / 10}</span></div>`).join('')}</div>`;
@@ -971,6 +1022,7 @@ function bindMain() {
   });
   main.addEventListener('input', e => { if (S.view === 'network' && e.target.id === 'net-step') onNetworkEvent(e); });
   main.addEventListener('keydown', e => {
+    if (e.target.closest('#author-table .pager') && ['ArrowLeft', 'ArrowRight'].includes(e.key)) { e.preventDefault(); turnAuthorPage(e.key === 'ArrowRight' ? 'next' : 'prev'); return; }
     if (!e.target.closest('.spotlight') || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
     e.preventDefault(); moveSpotlight(e.key === 'ArrowRight' ? 1 : -1);
   });
