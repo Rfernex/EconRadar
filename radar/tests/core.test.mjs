@@ -171,7 +171,7 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v16'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v17'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
@@ -199,4 +199,23 @@ test('Latest includes seven calendar publication days, excluding future, old, an
   assert.deepEqual(C.publishedThisWeek(papers, '2026-11-16').map(p => p.id), ['today', 'boundary']);
   assert.equal(papers.length, 5, 'the full library is unchanged');
   assert.deepEqual(C.publishedThisWeek([paper('newyear', { published: '2025-12-27' })], '2026-01-02').map(p => p.id), ['newyear']);
+});
+
+test('linked papers: shared labels grouped by dimension, designs reported as identification', () => {
+  const a = paper('L1'), b = paper('L2', { methods: ['did', 'structural'] });
+  const got = C.sharedByDimension(['t:minimum wage', 'm:did', 'm:structural', 'f:labour', 'a:A1'], ctx, [a, b]);
+  assert.deepEqual(got.map(([d]) => d), ['Author', 'Topic', 'Method', 'Identification', 'Field']);
+  assert.deepEqual(got[1], ['Topic', ['minimum wage']]);
+});
+
+test('paper selector: all picked characteristics must be present, suggestions keep results non-empty', () => {
+  const list = [paper('S1'), paper('S2', { methods: ['iv'] }), paper('S3', { topics: ['labour supply'], methods: ['iv'] })];
+  assert.deepEqual(C.papersWithAll(list, [{ kind: 'method', key: 'iv' }]).map(p => p.id), ['S2', 'S3']);
+  assert.deepEqual(C.papersWithAll(list, [{ kind: 'method', key: 'iv' }, { kind: 'topic', key: 'minimum wage' }]).map(p => p.id), ['S2']);
+  assert.deepEqual(C.papersWithAll(list, [{ kind: 'author', key: 'A1' }, { kind: 'field', key: 'labour' }]).length, 3);
+  assert.deepEqual(C.papersWithAll(list, []), [], 'no picks, no selection');
+  const opts = C.pickOptions(list, ctx, 'wage');
+  assert.deepEqual(opts.map(o => [o.kind, o.key, o.count]), [['topic', 'minimum wage', 2]]);
+  assert.deepEqual(C.pickOptions(list, ctx, 'labour', { picks: [{ kind: 'topic', key: 'labour supply' }] }).map(o => o.key), ['labour'], 'counted among current matches, picked ones left out');
+  assert.equal(C.pickOptions(list, ctx, 'lovelace')[0].label, 'Ada Lovelace');
 });

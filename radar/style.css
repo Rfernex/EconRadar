@@ -277,3 +277,45 @@ dialog::backdrop{background:#0d16188a;backdrop-filter:blur(3px)}.dialog-close{di
 .share-table button.link{font-weight:650}
 .inline-label{font-size:12px;color:var(--text-secondary);margin-right:2px}
 .tie-list{grid-template-columns:minmax(0,1fr)}.tie-list li{min-width:0}
+
+/* Network guide ("How to read this graph"): one step at a time, drawings use the theme roles */
+.net-head-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+dialog.guide{width:min(720px,calc(100vw - 24px));padding:22px 26px 18px}
+.guide-body{min-height:min(520px,62dvh)}
+.guide h2{margin:0 0 8px}.guide p,.guide li{color:var(--text-secondary);font-size:14px;line-height:1.6}.guide p{margin:0 0 10px}.guide ul{margin:0 0 10px;padding-left:18px}.guide li{margin:3px 0}
+.guide b{color:var(--ink);font-weight:650}
+.guide figure{margin:12px 0 14px;padding:12px;border:1px solid var(--line-soft);border-radius:12px;background:var(--paper)}
+.guide figure svg{display:block;width:100%;height:auto}
+.guide figcaption{font-size:11.5px;color:var(--muted);margin-top:6px;text-align:center}
+.guide .note{font-size:12px;color:var(--muted);border-left:2px solid var(--line);padding-left:10px}
+.guide-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding-top:12px;border-top:1px solid var(--line-soft)}
+.guide-dots{display:flex;gap:4px}.guide-dots button{border:0;background:none;padding:6px;display:grid;place-items:center}
+.guide-dots button::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--line)}.guide-dots button[aria-current="step"]::before{background:var(--accent)}
+.guide svg text{font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:var(--text-secondary)}
+.guide svg .t-strong{fill:var(--ink);font-weight:650}.guide svg .t-muted{fill:var(--muted)}
+.guide svg .e{stroke:var(--net-edge);fill:none}.guide svg .e-on{stroke:var(--accent);fill:none}.guide svg .e-off{stroke:var(--net-muted);fill:none;stroke-dasharray:4 4}
+.guide svg .n1{fill:var(--series-1)}.guide svg .n2{fill:var(--series-2)}.guide svg .n3{fill:var(--series-3)}.guide svg .n7{fill:var(--series-7)}.guide svg .nm{fill:var(--net-muted)}
+.guide svg .ring{fill:none;stroke:var(--surface-1);stroke-width:2}
+.guide svg .card{fill:var(--card);stroke:var(--line)}.guide svg .chip{fill:var(--line-soft)}.guide svg .chip-on{fill:var(--accent-soft);stroke:var(--accent)}
+.guide svg .kind-m{fill:var(--kind-method)}.guide svg .kind-d{fill:var(--kind-data)}
+.guide svg .bar1{fill:var(--accent)}.guide svg .bar2{fill:color-mix(in srgb,var(--accent) 65%,var(--card))}.guide svg .bar3{fill:color-mix(in srgb,var(--accent) 35%,var(--card))}
+.guide svg .min{stroke:var(--warn-ink);stroke-dasharray:3 3}
+@media (max-width:760px){dialog.guide{padding:18px 16px 14px}.guide-body{min-height:0}.guide p,.guide li{font-size:13.5px}}
+
+/* Hover detail: what a link to the selected node rests on */
+.tooltip .tip-why{display:grid;gap:1px;margin-top:6px;padding-top:6px;border-top:1px solid color-mix(in srgb,var(--paper) 25%,transparent);opacity:1}
+.tooltip .tip-why em{font-style:normal;font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.7}
+.tooltip .tip-why b{display:inline;font-size:12px}.tooltip .tip-why span{opacity:1}
+
+/* Paper selector: papers having every picked characteristic */
+.selector input[type=search]{width:100%;margin-top:4px}
+.sel-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 6px}
+.sel-chip{border:1px solid var(--accent);background:var(--accent-soft);color:var(--ink);border-radius:8px;padding:4px 8px;font-size:12px;display:inline-flex;gap:6px;align-items:center;max-width:100%;text-align:left}
+.sel-chip:hover{background:var(--accent);color:var(--accent-ink)}
+.kind-tag{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);flex:none}
+.sel-chip:hover .kind-tag{color:inherit}
+.sel-sugg{display:grid;gap:1px;margin-top:4px}.sel-sugg:empty{display:none}
+.sel-sugg button{border:0;background:none;display:flex;align-items:center;gap:8px;padding:6px 6px;border-radius:7px;text-align:left;font-size:12.5px;min-width:0}
+.sel-sugg button:hover,.sel-sugg button:focus-visible{background:var(--accent-soft)}
+.sel-sugg .sel-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sel-sugg .w{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.sel-sugg .kind-tag{width:76px}

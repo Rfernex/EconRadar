@@ -16,7 +16,7 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
   const reduce = matchMedia('(prefers-reduced-motion: reduce)');
   let width = 0, height = 0, dpr = 1, transform = d3.zoomIdentity;
   let nodes = [], links = [], byId = new Map(), adjacency = new Map();
-  let style = {}, opts = {}, selected = null, hovered = null, frame = 0, fitted = false;
+  let style = {}, opts = {}, selected = null, hovered = null, marked = null, frame = 0, fitted = false;
   const sim = d3.forceSimulation().alphaDecay(0.03).velocityDecay(0.35).stop();
 
   const radius = n => n._r;
@@ -60,12 +60,14 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
     ctx2d.scale(k, k);
     const focus = selected || hovered;
     const near = focus ? adjacency.get(focus.id) || new Set() : null;
+    // A marked set (papers picked in the side panel) stays lit when nothing is focused.
+    const mark = !focus && marked && marked.size ? marked : null;
     const maxW = opts.maxWeight || 1;
 
     // Links: recessive by default; new ones in ink, focused ones stronger.
     for (const l of links) {
-      const on = focus && (l.source === focus || l.target === focus);
-      const dim = focus && !on;
+      const on = focus ? l.source === focus || l.target === focus : mark ? mark.has(l.source.id) && mark.has(l.target.id) : false;
+      const dim = (focus || mark) && !on;
       const w = 0.6 + 2.4 * Math.sqrt(l.weight / maxW);
       ctx2d.globalAlpha = dim ? 0.06 : on ? 0.9 : l.isNew && opts.showNew ? 0.85 : 0.18 + 0.4 * (l.weight / maxW);
       ctx2d.strokeStyle = l.isNew && opts.showNew ? style.newInk : on ? style.soft : style.edge;
@@ -77,7 +79,7 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
 
     // Nodes: fill, 2px surface ring so overlaps stay legible, ink ring when new.
     for (const n of nodes) {
-      const dim = focus && n !== focus && !near.has(n.id);
+      const dim = focus ? n !== focus && !near.has(n.id) : mark ? !mark.has(n.id) : false;
       const r = radius(n);
       ctx2d.globalAlpha = dim ? 0.18 : 1;
       shape(n, r);
@@ -87,9 +89,9 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
       ctx2d.strokeStyle = style.surface;
       ctx2d.stroke();
       if (n._hollow) { shape(n, Math.max(r - 3 / k, r * 0.45)); ctx2d.fillStyle = style.surface; ctx2d.fill(); }
-      if ((n.isNew && opts.showNew) || n === selected) {
+      if ((n.isNew && opts.showNew) || n === selected || (mark && mark.has(n.id))) {
         shape(n, r + 3.5 / k);
-        ctx2d.lineWidth = (n === selected ? 2.5 : 1.6) / k;
+        ctx2d.lineWidth = (n === selected || mark ? 2.5 : 1.6) / k;
         ctx2d.strokeStyle = style.newInk;
         ctx2d.stroke();
       }
@@ -103,11 +105,11 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
     const font = 11.5 / k;
     ctx2d.font = `500 ${font}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx2d.lineJoin = 'round';
-    const rank = n => (n === focus ? 3 : near && near.has(n.id) ? 2 : n._labelAlways ? 1 : 0) * 1e6 + radius(n);
+    const rank = n => (n === focus ? 3 : (near && near.has(n.id)) || (mark && mark.has(n.id)) ? 2 : n._labelAlways ? 1 : 0) * 1e6 + radius(n);
     const placed = [];
     for (const n of [...nodes].sort((a, b) => rank(b) - rank(a))) {
       const r = radius(n);
-      const show = n === focus || (near && near.has(n.id) && (n._labelAlways || r * k > 5)) || (!focus && (r * k >= (opts.labelAt || 11) || n._labelAlways));
+      const show = n === focus || (near && near.has(n.id) && (n._labelAlways || r * k > 5)) || (mark && mark.has(n.id) && (mark.size <= 30 || r * k > 5)) || (!focus && !mark && (r * k >= (opts.labelAt || 11) || n._labelAlways));
       if (!show) continue;
       let text = n._label;
       if (text.length > 42) text = text.slice(0, 40) + '…';
@@ -253,6 +255,7 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
 
   return {
     render, select, find, fit, resize, center,
+    mark: ids => { marked = ids && ids.size ? ids : null; schedule(); },
     neighbours: id => [...(adjacency.get(id) || [])].map(x => byId.get(x)),
     linksOf: id => links.filter(l => l.source.id === id || l.target.id === id),
     node: id => byId.get(id),

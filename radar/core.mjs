@@ -324,6 +324,54 @@ export function describeShared(keys, ctx, papers = []) {
   }).filter((x, i, a) => a.indexOf(x) === i);
 }
 
+// Dimensions a paper link can rest on, in display order. Methods in the "design" group
+// (difference-in-differences, RDD, IV...) are reported as identification.
+const DIMENSIONS = [['a', 'Author'], ['t', 'Topic'], ['m', 'Method'], ['i', 'Identification'], ['d', 'Data'], ['f', 'Field']];
+/** What two linked papers share, grouped by dimension: [['Topic', ['minimum wage']], ...]. */
+export function sharedByDimension(keys, ctx, papers = []) {
+  const groups = new Map();
+  for (const k of keys) {
+    const kind = k.split(':')[0];
+    const dim = kind === 'm' && ctx.methods.get(k.slice(2))?.group === 'design' ? 'i' : kind;
+    const label = describeShared([k], ctx, papers)[0];
+    if (!label) continue;
+    let g = groups.get(dim);
+    if (!g) groups.set(dim, g = []);
+    if (!g.includes(label)) g.push(label);
+  }
+  return DIMENSIONS.filter(([d]) => groups.has(d)).map(([d, name]) => [name, groups.get(d)]);
+}
+
+// ---- paper selector: papers having every picked characteristic ----------------------
+export const PICK_KINDS = { topic: 'Topic', field: 'Field', method: 'Method', data: 'Data', author: 'Author' };
+const pickValues = (p, kind) => (kind === 'topic' ? p.topics : kind === 'field' ? p.fields : kind === 'method' ? p.methods : kind === 'data' ? p.data : p.authors.map(authorKey));
+/** Papers that have all the picked characteristics ({kind, key} each). */
+export function papersWithAll(papers, picks) {
+  return picks.length ? papers.filter(p => picks.every(k => pickValues(p, k.kind).includes(k.key))) : [];
+}
+/** Characteristics whose name contains the query, counted among the papers that already
+ *  match the current picks (so every suggestion still leaves at least one paper). */
+export function pickOptions(papers, ctx, query, { picks = [], limit = 12 } = {}) {
+  const q = fold(query).trim();
+  if (!q) return [];
+  const pool = picks.length ? papersWithAll(papers, picks) : papers;
+  const taken = new Set(picks.map(k => k.kind + ':' + k.key)), found = new Map();
+  for (const p of pool) for (const kind of Object.keys(PICK_KINDS)) {
+    pickValues(p, kind).forEach((key, i) => {
+      const id = kind + ':' + key;
+      if (taken.has(id)) return;
+      let o = found.get(id);
+      if (o === undefined) {
+        const label = kind === 'author' ? p.authors[i].n : ctx.label(kind, key);
+        o = fold(label).includes(q) ? { kind, key, label, count: 0, starts: fold(label).startsWith(q) } : null;
+        found.set(id, o);
+      }
+      if (o) o.count++;
+    });
+  }
+  return [...found.values()].filter(Boolean).sort((a, b) => b.starts - a.starts || b.count - a.count || a.label.localeCompare(b.label)).slice(0, limit).map(({ starts, ...o }) => o);
+}
+
 export function paperGraph(papers, ctx, { max = 400, k = 4, minScore = null, newSince = '', dateOf = p => p.added, match = 'all' } = {}) {
   const crit = matchCriteria(match);
   if (crit.length > 1) return paperGraphAll(papers, ctx, { max, k, minScore, newSince, dateOf, crit });

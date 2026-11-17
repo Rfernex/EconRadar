@@ -1,5 +1,6 @@
-import * as C from './core.mjs?v=9';
-import { createNetwork } from './graph.mjs?v=2';
+import * as C from './core.mjs?v=10';
+import { createNetwork } from './graph.mjs?v=3';
+import { openNetGuide } from './explainer.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
 const $ = (s, el = document) => el.querySelector(s);
@@ -681,6 +682,7 @@ function renderNetwork(keep = false) {
   if (keep && slider) { slider.max = Math.max(0, steps.length - 1); slider.value = S.net.step; }
   if (!keep || !S.network) {
     if (S.network) { S.network.destroy(); S.network = null; }
+    hideTip();
     const opts = lens === 'strands'
       ? `<span class="toolbar" role="group" aria-label="Node kinds">${[['field', 'Fields'], ['method', 'Methods'], ['data', 'Data'], ['topic', 'Topics']].map(([k, l]) => `<button type="button" class="btn ghost small" data-kind-toggle="${k}" aria-pressed="${!!S.prefs.kinds[k]}">${l}</button>`).join('')}</span>
          <label class="inline">Min. link <select id="net-min">${[1, 2, 3, 4, 6].map(v => `<option ${S.prefs.minEdge === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
@@ -689,7 +691,8 @@ function renderNetwork(keep = false) {
          <label class="inline">Papers <select id="net-max">${[[150, '150'], [400, '400'], [800, '800'], [1500, '1,500'], [3000, '3,000'], [0, 'All (slower)']].map(([v, l]) => `<option value="${v}" ${S.prefs.maxPapers === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`
         : `<label class="inline">Authors with at least <select id="net-minauth">${[[0, 'auto'], [1, '1 paper'], [2, '2 papers'], [3, '3 papers']].map(([v, l]) => `<option value="${v}" ${S.prefs.minAuthorPapers === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
     $('#main').innerHTML = `<div class="heading"><div><h1>Research network</h1><p>${LENS_TEXT[lens]}</p></div>
-        <div class="seg" role="group" aria-label="Lens">${Object.entries(LENSES).map(([k, l]) => `<button type="button" data-lens="${k}" aria-pressed="${lens === k}">${l}</button>`).join('')}</div></div>
+        <div class="net-head-tools"><div class="seg" role="group" aria-label="Lens">${Object.entries(LENSES).map(([k, l]) => `<button type="button" data-lens="${k}" aria-pressed="${lens === k}">${l}</button>`).join('')}</div>
+        <button type="button" class="btn ghost small" id="net-guide">How to read this graph</button></div></div>
       <div class="toolbar" style="margin-bottom:12px">${opts}
         <label class="inline">Highlight new <select id="net-new">${[['auto', 'since last update'], ['30', 'past 30 days'], ['90', 'past 90 days'], ['none', 'off']].map(([v, l]) => `<option value="${v}" ${String(S.prefs.highlight) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <input type="search" id="net-find" placeholder="Find a node…" aria-label="Find a node in the network" style="min-width:170px">
@@ -704,6 +707,8 @@ function renderNetwork(keep = false) {
     });
   }
   drawNetwork();
+  // The guide opens by itself once, on the first visit to this tab.
+  if (!S.prefs.netGuideSeen) openNetGuide(() => { S.prefs.netGuideSeen = true; savePrefs(); });
 }
 function drawNetwork() {
   if (!S.network) return;
@@ -715,12 +720,58 @@ function drawNetwork() {
   if (S.net.pending) { const id = S.net.pending; S.net.pending = null; S.network.select(id, true); }
   else if (S.net.selected && S.network.node(S.net.selected)) S.network.select(S.net.selected);
   else { S.net.selected = null; }
+  markPicks();
   sidePanel();
 }
 function tipFor(n) {
-  if (n.kind === 'paper') return `<b>${esc(n.label)}</b><span>${esc(journalShort(n.paper.journal))} · ${dayLabel(pubDate(n.paper))}</span>`;
+  const why = linkTip(n);
+  if (n.kind === 'paper') return `<b>${esc(n.label)}</b><span>${esc(journalShort(n.paper.journal))} · ${dayLabel(pubDate(n.paper))}</span>${why}`;
   const kind = { field: 'Field', method: 'Method', data: 'Data', topic: 'Topic', author: 'Author' }[n.kind];
-  return `<b>${esc(n.label)}</b><span>${kind} · ${plural(Math.round(n.count), 'paper')}${n.isNew ? ' · new' : ''}</span>`;
+  return `<b>${esc(n.label)}</b><span>${kind} · ${plural(Math.round(n.count), 'paper')}${n.isNew ? ' · new' : ''}</span>${why}`;
+}
+// With a node selected, hovering one of its linked nodes says what the link rests on.
+function linkTip(n) {
+  const sel = S.net.selected && S.network?.node(S.net.selected);
+  if (!sel || sel.id === n.id) return '';
+  const l = S.network.linksOf(sel.id).find(x => x.source.id === n.id || x.target.id === n.id);
+  if (!l) return '';
+  if (sel.kind === 'paper' && n.kind === 'paper') {
+    const dims = C.sharedByDimension(l.why || [], S.ctx, [sel.paper, n.paper]);
+    return dims.length ? `<span class="tip-why"><em>Linked by</em>${dims.map(([d, items]) => `<span><b>${esc(d)}</b> ${esc(items.join(', '))}</span>`).join('')}</span>` : '';
+  }
+  if (sel.kind === 'author' && n.kind === 'author') return `<span class="tip-why">${plural(l.weight, 'paper')} written together</span>`;
+  if (sel.kind === 'author' || n.kind === 'author') {
+    const a = (sel.kind === 'author' ? sel : n).author, f = (sel.kind === 'author' ? n : sel).key;
+    const c = a ? a.papers.filter(p => p.fields.includes(f)).length : 0;
+    return c ? `<span class="tip-why">${plural(c, 'paper')} in this field</span>` : '';
+  }
+  return `<span class="tip-why">Appears with ${esc(sel._label)} in ${plural(l.weight, 'paper')}</span>`;
+}
+
+// ---- Paper selector (Papers lens): papers having every picked characteristic --------
+function markPicks() {
+  const picks = S.net.picks || [];
+  if (!S.network || S.prefs.lens !== 'papers' || !picks.length) { S.network?.mark(null); return; }
+  S.network.mark(new Set(C.papersWithAll(S.net.graph.nodes.map(x => x.paper), picks).map(p => p.id)));
+}
+function pickSuggestions(q) {
+  const opts = C.pickOptions(netPapers(), S.ctx, q, { picks: S.net.picks || [] });
+  if (!q.trim()) return '';
+  return opts.length ? opts.map(o => `<button type="button" data-pick-add="${esc(o.kind)}" data-key="${esc(o.key)}" data-label="${esc(o.label)}"><span class="kind-tag">${C.PICK_KINDS[o.kind]}</span><span class="sel-label">${esc(o.label)}</span><span class="w">${fmt(o.count)}</span></button>`).join('')
+    : `<p class="small muted">${S.net.picks?.length ? 'Nothing that also matches what is already picked.' : 'No topic, field, method, data source or author by that name in view.'}</p>`;
+}
+function selectorHtml() {
+  const picks = S.net.picks || [];
+  const inView = C.papersWithAll(netPapers(), picks);
+  const drawn = new Set(S.net.graph.nodes.map(x => x.id)), inGraph = inView.filter(p => drawn.has(p.id));
+  const limit = S.net.pickLimit || 20;
+  return `<div class="panel selector"><span class="kind">Find papers with…</span>
+    <p class="small muted">Pick topics, fields, methods, data sources or authors. Papers that have <b>all</b> of them light up on the graph.</p>
+    ${picks.length ? `<div class="sel-chips">${picks.map((k, i) => `<button type="button" class="sel-chip" data-pick-remove="${i}" aria-label="Remove ${esc(k.label)}"><span class="kind-tag">${C.PICK_KINDS[k.kind]}</span>${esc(k.label)} <span aria-hidden="true">×</span></button>`).join('')}<button type="button" class="text-btn" data-pick-clear>Clear</button></div>` : ''}
+    <input type="search" id="net-pick-q" placeholder="${picks.length ? 'Add another…' : 'Type a topic, method, author…'}" aria-label="Find a characteristic to add" autocomplete="off" value="${esc(S.net.pickQ || '')}">
+    <div class="sel-sugg" id="net-pick-sugg">${pickSuggestions(S.net.pickQ || '')}</div>
+    ${picks.length ? `<p class="small" style="margin:10px 0 6px"><b>${plural(inGraph.length, 'paper')}</b> on the graph${inView.length > inGraph.length ? ` · ${fmt(inView.length)} in view in total (raise “Papers” to draw them all)` : ''}</p>
+      ${inGraph.length ? `<ul class="tie-list">${inGraph.slice(0, limit).map(p => `<li><button type="button" data-select="${esc(p.id)}">${esc(p.title)}<small class="shared">${esc(journalShort(p.journal))} · ${dayLabel(pubDate(p))}</small></button></li>`).join('')}</ul>${inGraph.length > limit ? `<button type="button" class="btn ghost small" data-pick-more>Show more (${fmt(inGraph.length - limit)} remaining)</button>` : ''}` : ''}` : ''}</div>`;
 }
 function selectNode(id, focus) {
   if (!S.network) return;
@@ -749,7 +800,7 @@ function sidePanel() {
     const ties = [...g.links].sort((a, b) => b.weight - a.weight).slice(0, 10);
     const fresh = g.links.filter(l => l.isNew).sort((a, b) => b.weight - a.weight).slice(0, 10);
     const tieLi = l => `<li><button type="button" data-select="${esc(l.source)}">${esc(label(l.source))} ↔ ${esc(label(l.target))}</button><span class="w">${S.prefs.lens === 'papers' ? '' : fmt(l.weight)}</span></li>`;
-    side.innerHTML = `<div class="panel"><span class="kind">Overview</span><h3>${plural(papers.length, 'paper')} · ${plural(g.nodes.length, 'node')}</h3><p class="small muted">Click a node to see its ties, its papers and who works on it. Drag to rearrange, scroll or pinch to zoom.${g.truncated ? ` Showing the ${fmt(S.prefs.maxPapers)} most recent papers; choose “All” in Papers to draw every one.` : ''}</p></div>
+    side.innerHTML = `${S.prefs.lens === 'papers' ? selectorHtml() : ''}<div class="panel"><span class="kind">Overview</span><h3>${plural(papers.length, 'paper')} · ${plural(g.nodes.length, 'node')}</h3><p class="small muted">Click a node to see its ties, its papers and who works on it. Drag to rearrange, scroll or pinch to zoom.${g.truncated ? ` Showing the ${fmt(S.prefs.maxPapers)} most recent papers; choose “All” in Papers to draw every one.` : ''}</p></div>
       ${S.prefs.lens !== 'papers' ? `<div class="panel"><span class="kind">Most popular</span><ul class="tie-list">${top.map(x => `<li><button type="button" data-select="${esc(x.id)}">${esc(x._label || x.label)}</button><span class="w">${fmt(Math.round(x.count))}</span></li>`).join('')}</ul></div>` : ''}
       <div class="panel"><span class="kind">Newest ties</span>${fresh.length ? `<ul class="tie-list">${fresh.map(tieLi).join('')}</ul>` : '<p class="small muted">No ties first seen in the highlight window. Turn on a wider “Highlight new” window, or wait for the next update.</p>'}</div>
       <div class="panel"><span class="kind">Strongest ties</span><ul class="tie-list">${ties.map(tieLi).join('')}</ul></div>`;
@@ -800,6 +851,11 @@ function onNetworkEvent(e) {
   if (e.type === 'click') {
     const b = t.closest('button'); if (!b) return;
     if (b.hasAttribute('data-net-all-more')) { S.net.matchLimit += 30; sidePanel(); return; }
+    if (b.id === 'net-guide') { openNetGuide(() => { S.prefs.netGuideSeen = true; savePrefs(); }); return; }
+    if (b.dataset.pickAdd) { S.net.picks = [...(S.net.picks || []), { kind: b.dataset.pickAdd, key: b.dataset.key, label: b.dataset.label }]; S.net.pickQ = ''; S.net.pickLimit = 20; markPicks(); sidePanel(); $('#net-pick-q')?.focus(); return; }
+    if (b.dataset.pickRemove) { S.net.picks = S.net.picks.filter((_, i) => i !== +b.dataset.pickRemove); S.net.pickLimit = 20; markPicks(); sidePanel(); return; }
+    if (b.hasAttribute('data-pick-clear')) { S.net.picks = []; S.net.pickQ = ''; markPicks(); sidePanel(); return; }
+    if (b.hasAttribute('data-pick-more')) { S.net.pickLimit = (S.net.pickLimit || 20) + 20; sidePanel(); return; }
     if (b.dataset.netFeature) { S.net.matchKey = S.net.matchKey === b.dataset.netFeature ? '' : b.dataset.netFeature; S.net.matchLimit = 30; sidePanel(); return; }
     if (b.dataset.lens) { S.prefs.lens = b.dataset.lens; savePrefs(); S.net.selected = null; stopPlay(); renderNetwork(); }
     else if (b.dataset.matchToggle) {
@@ -823,6 +879,7 @@ function onNetworkEvent(e) {
       S.playing = setInterval(advance, matchMedia('(prefers-reduced-motion: reduce)').matches ? 1600 : 700);
     }
   } else if (e.type === 'change' || e.type === 'input') {
+    if (t.id === 'net-pick-q') { if (e.type === 'input') { S.net.pickQ = t.value; $('#net-pick-sugg').innerHTML = pickSuggestions(t.value); } return; }
     if (t.id === 'net-step') { stopPlay(); S.net.step = +t.value; drawNetwork(); }
     if (e.type !== 'change') return;
     if (t.id === 'net-min') { S.prefs.minEdge = +t.value; savePrefs(); drawNetwork(); }
@@ -1050,7 +1107,7 @@ function bindMain() {
     if (e.target.id === 'trend-scope') { S.prefs.trendScope = e.target.value; savePrefs(); render(); }
     if (e.target.id === 'import-file') importUser(e.target.files[0]);
   });
-  main.addEventListener('input', e => { if (S.view === 'network' && e.target.id === 'net-step') onNetworkEvent(e); });
+  main.addEventListener('input', e => { if (S.view === 'network' && (e.target.id === 'net-step' || e.target.id === 'net-pick-q')) onNetworkEvent(e); });
   main.addEventListener('keydown', e => {
     if (e.target.closest('#author-table .pager') && ['ArrowLeft', 'ArrowRight'].includes(e.key)) { e.preventDefault(); turnAuthorPage(e.key === 'ArrowRight' ? 'next' : 'prev'); return; }
     if (!e.target.closest('.spotlight') || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
