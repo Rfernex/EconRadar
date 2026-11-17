@@ -1,4 +1,4 @@
-const CACHE='econradar-v18',SHELL=['../shared/motion.css?v=1','../shared/motion.mjs?v=1','./','./index.html','./style.css?v=15','./app.mjs?v=18','./core.mjs?v=10','./graph.mjs?v=3','./explainer.mjs?v=1','./vendor/d3.min.js','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png','./config.json'];
+const CACHE='econradar-v19',SHELL=['../shared/motion.css?v=1','../shared/motion.mjs?v=1','./','./index.html','./style.css?v=16','./app.mjs?v=19','./core.mjs?v=11','./graph.mjs?v=3','./explainer.mjs?v=1','./vendor/d3.min.js','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png','./config.json'];
 // The paper files change twice a week: always try the network first, fall back to the last copy offline.
 const FRESH=/\/(data\/(?:newsletter\/)?[^/]+\.json|config\.json|focus\.json)$/;
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));

@@ -318,3 +318,15 @@ dialog.guide{width:min(720px,calc(100vw - 24px));padding:22px 26px 18px}
 .sel-sugg button:hover,.sel-sugg button:focus-visible{background:var(--accent-soft)}
 .sel-sugg .sel-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sel-sugg .w{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
 .sel-sugg .kind-tag{width:76px}
+
+/* Filter combinations: "any of / all of" per picker, and excluded ("not") values */
+.pick-mode{display:flex;gap:3px;border:1px solid var(--line);border-radius:9px;padding:3px;margin-bottom:8px}
+.pick-mode button{flex:1;border:0;background:none;border-radius:6px;padding:5px 8px;font-size:12px;color:var(--text-secondary)}
+.pick-mode button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:650}
+.pick-opt.is-not span:not(.n){text-decoration:line-through;color:var(--muted)}
+.chip-not{border:1px dashed var(--line);background:none;color:var(--muted);opacity:.75;border-radius:6px;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:0 5px;line-height:16px}
+.chip-not:hover{border-color:var(--accent);color:var(--ink);opacity:1}
+.chip.removable .chip-not{font-size:9.5px;padding:0 5px;color:var(--muted)}
+.chip.is-not{background:var(--warn-bg);color:var(--warn-ink)}.chip.is-not .chip-text{text-decoration:line-through}
+.chip.is-not .chip-not{background:var(--warn-ink);border:1px solid var(--warn-ink);color:var(--warn-bg);opacity:1}
+.chip-mode{align-self:center;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-left:4px}

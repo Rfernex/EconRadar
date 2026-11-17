@@ -171,7 +171,7 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v18'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v19'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
@@ -218,4 +218,20 @@ test('paper selector: all picked characteristics must be present, suggestions ke
   assert.deepEqual(opts.map(o => [o.kind, o.key, o.count]), [['topic', 'minimum wage', 2]]);
   assert.deepEqual(C.pickOptions(list, ctx, 'labour', { picks: [{ kind: 'topic', key: 'labour supply' }] }).map(o => o.key), ['labour'], 'counted among current matches, picked ones left out');
   assert.equal(C.pickOptions(list, ctx, 'lovelace')[0].label, 'Ada Lovelace');
+});
+
+test('filters: "all of" per picker, topics, and excluded values', () => {
+  const list = [paper('C1', { methods: ['did', 'structural'] }), paper('C2', { methods: ['did'] }), paper('C3', { methods: ['structural'], topics: ['labour supply'] }), paper('C4', { methods: ['did', 'structural'], journal: 'jeh', topics: ['labour supply', 'minimum wage'] })];
+  const base = C.cleanFilters({});
+  assert.deepEqual(C.filterPapers(list, { ...base, methods: ['did', 'structural'] }, ctx).map(p => p.id), ['C1', 'C2', 'C3', 'C4'], 'any of, as before');
+  assert.deepEqual(C.filterPapers(list, { ...base, methods: ['did', 'structural'], all: ['methods'] }, ctx).map(p => p.id), ['C1', 'C4'], 'all of');
+  assert.deepEqual(C.filterPapers(list, { ...base, topics: ['labour supply', 'minimum wage'], all: ['topics'] }, ctx).map(p => p.id), ['C4']);
+  assert.deepEqual(C.filterPapers(list, { ...base, topics: ['labour supply'] }, ctx).map(p => p.id), ['C3', 'C4']);
+  assert.deepEqual(C.filterPapers(list, { ...base, methods: ['did'], not: ['methods:structural'] }, ctx).map(p => p.id), ['C2'], 'did but not structural');
+  assert.deepEqual(C.filterPapers(list, { ...base, not: ['journals:jeh', 'authors:A9'] }, ctx).map(p => p.id), ['C1', 'C2', 'C3']);
+  assert.deepEqual(C.filterPapers(list, { ...base, fields: ['labour', 'econ-history'], all: ['fields'] }, ctx).map(p => p.id), [], 'all of two fields none has');
+  const clean = C.cleanFilters({ all: ['methods', 'journals', 'x'], not: ['methods:rdd', 'bogus', 'authors:n:ada lovelace', 'families:x'], topics: ['minimum wage'] });
+  assert.deepEqual(clean.all, ['methods'], 'only multi-valued pickers can be "all of"');
+  assert.deepEqual(clean.not, ['methods:rdd', 'authors:n:ada lovelace']);
+  assert.equal(C.activeFilterCount(clean), 3);
 });

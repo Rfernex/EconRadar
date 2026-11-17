@@ -1,4 +1,4 @@
-import * as C from './core.mjs?v=10';
+import * as C from './core.mjs?v=11';
 import { createNetwork } from './graph.mjs?v=3';
 import { openNetGuide } from './explainer.mjs?v=1';
 
@@ -89,8 +89,9 @@ async function load() {
     absorb();
     S.loadingRest = null;
     // The author picker was built from the first year only: rebuild it with everyone
-    S.authorPick = null;
+    S.authorPick = null; S.topicPick = null;
     if ($('#f-author-list')) renderAuthorOptions($('#f-author-q')?.value || '');
+    if ($('#f-topic-list')) renderTopicOptions($('#f-topic-q')?.value || '');
     refresh({ keepNetwork: S.view === 'network' });
     sideStatus();
   }) : null;
@@ -100,6 +101,9 @@ function absorb() {
   S.byId = new Map(S.papers.map(p => [p.id, p]));
   S.firsts = C.firsts(S.papers);
   S.allAuthors = C.authorIndex(S.papers);
+  const topics = new Map();
+  for (const p of S.papers) for (const t of p.topics) topics.set(t, (topics.get(t) || 0) + 1);
+  S.allTopics = topics;
 }
 const abstractsLoaded = new Map();
 function loadAbstracts(year) {
@@ -126,9 +130,11 @@ function refresh({ keepNetwork = false } = {}) {
 // ---- filters ------------------------------------------------------------------------
 const countBy = (facet) => { const o = {}; for (const p of S.papers) for (const k of [].concat(p[facet])) o[k] = (o[k] || 0) + 1; return o; };
 
+// "Any of / All of" switch at the top of a picker (only where a paper can have several values).
+const modeSwitch = key => C.ALL_OF_FACETS.includes(key) ? `<div class="pick-mode" role="group" aria-label="Match any or all of the ticked values"><button type="button" data-mode="${key}" data-value="any">Any of</button><button type="button" data-mode="${key}" data-value="all">All of</button></div>` : '';
 function pickerHtml(key, label, groups) {
   const opts = g => g.options.map(o => `<label class="pick-opt" data-text="${esc(C.fold(o.label))}"><input type="checkbox" data-filter="${key}" value="${esc(o.value)}">${o.dot || ''}<span>${esc(o.label)}</span><span class="n">${o.count ? fmt(o.count) : ''}</span></label>`).join('');
-  return `<details class="pick" data-pick="${key}"><summary>${esc(label)} <b hidden></b></summary><div class="pick-panel"><input type="search" placeholder="Find ${esc(label.toLowerCase())}…" aria-label="Find ${esc(label.toLowerCase())}" data-pick-search>
+  return `<details class="pick" data-pick="${key}"><summary>${esc(label)} <b hidden></b></summary><div class="pick-panel">${modeSwitch(key)}<input type="search" placeholder="Find ${esc(label.toLowerCase())}…" aria-label="Find ${esc(label.toLowerCase())}" data-pick-search>
     ${groups.map(g => `<div class="pick-group">${g.label ? (g.family ? `<button type="button" data-family="${g.family}" title="Select the whole family">${fieldDot(S.config.fields.find(f => f.family === g.family)?.key)}${esc(g.label)}</button>` : `<button type="button" disabled>${esc(g.label)}</button>`) : ''}${opts(g)}</div>`).join('')}</div></details>`;
 }
 
@@ -142,8 +148,10 @@ function renderFilters() {
     <input type="search" id="f-q" placeholder="Search titles, questions, topics, authors, data…" aria-label="Search papers" value="${esc(S.filters.q)}">
     <select id="f-period" aria-label="Publication date">${[['all', 'Published: any time'], ['7d', 'Published: past 7 days'], ['30d', 'Published: past 30 days'], ['90d', 'Published: past 3 months'], ['180d', 'Published: past 6 months'], ['365d', 'Published: past year'], ['custom', 'Published between…']].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
     <span id="f-custom" class="toolbar" hidden><input type="date" id="f-from" aria-label="Published from"><input type="date" id="f-to" aria-label="Published until"></span>
-    ${pickerHtml('fields', 'Field', fieldGroups)}${pickerHtml('methods', 'Method', methodGroups)}${pickerHtml('data', 'Data', dataGroups)}${pickerHtml('journals', 'Source', journalGroups)}
-    <details class="pick" data-pick="authors"><summary>Author <b hidden></b></summary><div class="pick-panel"><input type="search" placeholder="Type a name…" aria-label="Find an author" id="f-author-q"><p class="small muted pick-count" id="f-author-count"></p><div id="f-author-list"></div></div></details>
+    ${pickerHtml('fields', 'Field', fieldGroups)}${pickerHtml('methods', 'Method', methodGroups)}${pickerHtml('data', 'Data', dataGroups)}
+    <details class="pick" data-pick="topics"><summary>Topic <b hidden></b></summary><div class="pick-panel">${modeSwitch('topics')}<input type="search" placeholder="Type a topic…" aria-label="Find a topic" id="f-topic-q"><p class="small muted pick-count" id="f-topic-count"></p><div id="f-topic-list"></div></div></details>
+    ${pickerHtml('journals', 'Source', journalGroups)}
+    <details class="pick" data-pick="authors"><summary>Author <b hidden></b></summary><div class="pick-panel">${modeSwitch('authors')}<input type="search" placeholder="Type a name…" aria-label="Find an author" id="f-author-q"><p class="small muted pick-count" id="f-author-count"></p><div id="f-author-list"></div></div></details>
     <button type="button" class="btn ghost small" data-toggle="saved" aria-pressed="false">★ Saved</button>
     <button type="button" class="btn ghost small" data-toggle="unread" aria-pressed="false">Unread</button>
     <button type="button" class="btn ghost small" data-toggle="followed" aria-pressed="false">Followed authors</button>
@@ -151,10 +159,15 @@ function renderFilters() {
     <button type="button" class="text-btn" id="f-clear">Clear all</button>
   </div><div class="active-filters" id="active-filters"></div>`;
   renderAuthorOptions('');
-  // The author list grows as you scroll it (every author in the radar is reachable)
+  renderTopicOptions('');
+  // The author and topic lists grow as you scroll them (every one in the radar is reachable)
   $('[data-pick="authors"] .pick-panel').addEventListener('scroll', e => {
     const p = e.currentTarget, st = S.authorPick;
     if (st && st.shown < st.list.length && p.scrollTop + p.clientHeight > p.scrollHeight - 120) renderAuthorOptions(st.q, true);
+  });
+  $('[data-pick="topics"] .pick-panel').addEventListener('scroll', e => {
+    const p = e.currentTarget, st = S.topicPick;
+    if (st && st.shown < st.list.length && p.scrollTop + p.clientHeight > p.scrollHeight - 120) renderTopicOptions(st.q, true);
   });
 }
 
@@ -180,6 +193,30 @@ function renderAuthorOptions(q, more = false) {
     + (st.shown < st.list.length ? `<button type="button" class="text-btn pick-more" id="f-author-more">Show more · ${fmt(st.list.length - st.shown)} left</button>` : ''));
 }
 
+// A value is "picked" when it is included or excluded; its checkbox is ticked either way.
+const isNot = (facet, key) => S.filters.not.includes(facet + ':' + key);
+const picked = (facet, key) => S.filters[facet].includes(key) || isNot(facet, key);
+// Topic picker: every topic tag matching the search, picked ones first, then by number of papers.
+function renderTopicOptions(q, more = false) {
+  const box = $('#f-topic-list');
+  if (!box) return;
+  let st = S.topicPick;
+  if (!more || !st || st.q !== q) {
+    const terms = C.queryTerms(q);
+    const list = [...(S.allTopics || new Map())].filter(([t]) => terms.every(x => C.fold(t).includes(x)))
+      .sort((a, b) => (picked('topics', b[0]) - picked('topics', a[0])) || b[1] - a[1] || a[0].localeCompare(b[0]));
+    st = S.topicPick = { q, list, shown: 0 };
+    box.innerHTML = '';
+    $('#f-topic-count').textContent = list.length ? `${fmt(list.length)} ${q ? 'matching ' : ''}topic${list.length === 1 ? '' : 's'}${q ? '' : ' · type to search'}` : '';
+  }
+  if (!st.list.length) { box.innerHTML = '<p class="muted small">No topic by that name.</p>'; return; }
+  const next = st.list.slice(st.shown, st.shown + AUTHOR_STEP);
+  st.shown += next.length;
+  box.querySelector('.pick-more')?.remove();
+  box.insertAdjacentHTML('beforeend', next.map(([t, n]) => `<label class="pick-opt${isNot('topics', t) ? ' is-not' : ''}"><input type="checkbox" data-filter="topics" value="${esc(t)}" ${picked('topics', t) ? 'checked' : ''}><span>${esc(t)}</span><span class="n">${fmt(n)}</span></label>`).join('')
+    + (st.shown < st.list.length ? `<button type="button" class="text-btn pick-more" id="f-topic-more">Show more · ${fmt(st.list.length - st.shown)} left</button>` : ''));
+}
+
 function updateFilterUI() {
   const f = S.filters, bar = $('#filter-bar');
   if (!bar.firstChild) return;
@@ -187,23 +224,33 @@ function updateFilterUI() {
   $('#f-period').value = f.period;
   $('#f-custom').hidden = f.period !== 'custom';
   $('#f-from').value = f.from; $('#f-to').value = f.to;
-  for (const box of $$('input[data-filter]', bar)) box.checked = f[box.dataset.filter].includes(box.value);
+  for (const box of $$('input[data-filter]', bar)) { box.checked = picked(box.dataset.filter, box.value); box.closest('.pick-opt')?.classList.toggle('is-not', isNot(box.dataset.filter, box.value)); }
   for (const pick of $$('.pick', bar)) {
-    const n = pick.dataset.pick === 'fields' ? f.fields.length + f.families.length : f[pick.dataset.pick].length;
+    const k = pick.dataset.pick, nots = f.not.filter(x => x.startsWith(k + ':')).length;
+    const n = (k === 'fields' ? f.fields.length + f.families.length : f[k].length) + nots;
     const b = $('summary b', pick); b.hidden = !n; b.textContent = n; pick.classList.toggle('on', !!n);
   }
+  for (const m of $$('[data-mode]', bar)) m.setAttribute('aria-pressed', String((f.all.includes(m.dataset.mode) ? 'all' : 'any') === m.dataset.value));
   for (const t of $$('[data-toggle]', bar)) t.setAttribute('aria-pressed', String(!!f[t.dataset.toggle]));
   const chips = [];
-  const chip = (kind, value, text, dot = '') => chips.push(`<span class="chip removable">${dot}${esc(text)}<button type="button" data-remove="${kind}" data-value="${esc(value)}" aria-label="Remove ${esc(text)}">×</button></span>`);
+  // Picker values carry a "not" switch: excluded values show struck through.
+  const chip = (kind, value, text, dot = '') => {
+    const flip = C.NOT_FACETS.includes(kind) ? `<button type="button" class="chip-not" data-flip="${kind}" data-value="${esc(value)}" aria-pressed="false" aria-label="Exclude ${esc(text)} instead" title="Exclude papers with this instead">not</button>` : '';
+    chips.push(`<span class="chip removable">${dot}<span class="chip-text">${esc(text)}</span>${flip}<button type="button" data-remove="${kind}" data-value="${esc(value)}" aria-label="Remove ${esc(text)}">×</button></span>`);
+  };
+  const allOf = (kind, label) => { if (f.all.includes(kind) && f[kind].length > 1) chips.push(`<span class="chip-mode">${label} · all of</span>`); };
   if (f.q) chip('q', '', `“${f.q}”`);
   if (f.period !== 'all') chip('period', '', f.period === 'custom' ? `Published ${f.from ? dayLabel(f.from) : '…'} – ${f.to ? dayLabel(f.to) : '…'}` : $('#f-period').selectedOptions[0].textContent);
   if (f.run) chip('run', '', `Added in the ${dayLabel(f.run)} update`);
   f.families.forEach(k => chip('families', k, S.ctx.label('family', k), `<i class="dot" style="background:${famVar(k)}"></i>`));
-  f.fields.forEach(k => chip('fields', k, S.ctx.label('field', k), fieldDot(k)));
-  f.methods.forEach(k => chip('methods', k, S.ctx.label('method', k)));
-  f.data.forEach(k => chip('data', k, S.ctx.label('data', k)));
+  allOf('fields', 'Field'); f.fields.forEach(k => chip('fields', k, S.ctx.label('field', k), fieldDot(k)));
+  allOf('methods', 'Method'); f.methods.forEach(k => chip('methods', k, S.ctx.label('method', k)));
+  allOf('data', 'Data'); f.data.forEach(k => chip('data', k, S.ctx.label('data', k)));
+  allOf('topics', 'Topic'); f.topics.forEach(k => chip('topics', k, k));
   f.journals.forEach(k => chip('journals', k, S.ctx.label('journal', k)));
-  f.authors.forEach(k => chip('authors', k, S.allAuthors.get(k)?.name || k));
+  allOf('authors', 'Author'); f.authors.forEach(k => chip('authors', k, S.allAuthors.get(k)?.name || k));
+  const notLabel = (facet, key) => (facet === 'authors' ? S.allAuthors.get(key)?.name || key : facet === 'topics' ? key : S.ctx.label({ fields: 'field', methods: 'method', data: 'data', journals: 'journal' }[facet], key));
+  f.not.map(C.splitNot).forEach(([facet, key]) => chips.push(`<span class="chip removable is-not"><button type="button" class="chip-not" data-flip="${facet}" data-value="${esc(key)}" aria-pressed="true" aria-label="Include it again" title="Include papers with this again">not</button><span class="chip-text">${esc(notLabel(facet, key))}</span><button type="button" data-remove="not" data-value="${esc(facet + ':' + key)}" aria-label="Remove ${esc(notLabel(facet, key))}">×</button></span>`));
   $('#active-filters').innerHTML = chips.join('');
   const count = C.activeFilterCount(f);
   $('#filter-count').hidden = !count; $('#filter-count').textContent = count;
@@ -218,6 +265,7 @@ function bindFilters() {
   bar.addEventListener('input', e => {
     if (e.target.id === 'f-q') { clearTimeout(qTimer); qTimer = setTimeout(() => setFilter(f => { f.q = e.target.value; }), 220); }
     if (e.target.id === 'f-author-q') renderAuthorOptions(e.target.value);
+    if (e.target.id === 'f-topic-q') renderTopicOptions(e.target.value);
     if (e.target.matches('[data-pick-search]')) {
       const q = C.fold(e.target.value);
       for (const o of $$('.pick-opt', e.target.closest('.pick-panel'))) o.hidden = q && !o.dataset.text.includes(q);
@@ -225,7 +273,8 @@ function bindFilters() {
   });
   bar.addEventListener('change', e => {
     const t = e.target;
-    if (t.dataset.filter) setFilter(f => toggleIn(f[t.dataset.filter], t.value));
+    // Unticking an excluded value removes the exclusion; otherwise tick/untick includes it.
+    if (t.dataset.filter) setFilter(f => { const nk = t.dataset.filter + ':' + t.value; if (f.not.includes(nk)) toggleIn(f.not, nk); else toggleIn(f[t.dataset.filter], t.value); });
     else if (t.id === 'f-period') setFilter(f => { f.period = t.value; if (t.value === 'custom' && !f.from) f.from = C.addDays(S.today, -30); });
     else if (t.id === 'f-from' || t.id === 'f-to') setFilter(f => { f[t.id === 'f-from' ? 'from' : 'to'] = t.value; });
   });
@@ -233,9 +282,13 @@ function bindFilters() {
     const t = e.target.closest('button'); if (!t) return;
     if (t.dataset.toggle) setFilter(f => { f[t.dataset.toggle] = !f[t.dataset.toggle]; });
     else if (t.dataset.family) setFilter(f => toggleIn(f.families, t.dataset.family));
+    else if (t.dataset.mode) setFilter(f => { f.all = f.all.filter(k => k !== t.dataset.mode); if (t.dataset.value === 'all') f.all.push(t.dataset.mode); });
+    else if (t.dataset.flip) setFilter(f => { const k = t.dataset.flip, v = t.dataset.value, nk = k + ':' + v; if (f.not.includes(nk)) { toggleIn(f.not, nk); f[k].push(v); } else { toggleIn(f[k], v); f.not.push(nk); } });
+    else if (t.id === 'f-topic-more') renderTopicOptions(S.topicPick?.q || '', true);
     else if (t.dataset.remove) setFilter(f => { const k = t.dataset.remove; if (k === 'q') f.q = ''; else if (k === 'period') f.period = 'all'; else if (k === 'run') f.run = ''; else toggleIn(f[k], t.dataset.value); });
     else if (t.id === 'f-author-more') renderAuthorOptions(S.authorPick?.q || '', true);
-    else if (t.id === 'f-clear') setFilter(f => Object.assign(f, C.EMPTY_FILTERS, { families: [], fields: [], methods: [], data: [], journals: [], authors: [] }));
+    // Clear all keeps the "any of / all of" choices: they are a way of working, not a filter.
+    else if (t.id === 'f-clear') setFilter(f => Object.assign(f, C.EMPTY_FILTERS, { families: [], fields: [], methods: [], data: [], topics: [], journals: [], authors: [], not: [], all: f.all }));
   });
   // One open picker at a time; click outside closes it.
   bar.addEventListener('toggle', e => { if (e.target.open) for (const d of $$('.pick[open]', bar)) if (d !== e.target) d.open = false; }, true);
@@ -260,7 +313,11 @@ function route() {
   for (const a of $$('.nav-link')) a.classList.toggle('active', a.dataset.view === (S.view === 'author' ? 'authors' : S.view));
   $('#crumb').textContent = { latest: 'LATEST PAPERS', papers: 'PAPER LIBRARY', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', newsletter: 'WEEKLY NEWSLETTER', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
   $('#filter-bar').hidden = $('#filter-toggle').hidden = ['sources', 'focus', 'newsletter'].includes(S.view);
-  render();
+  // The network can take a second or two to draw: show the tab at once, then draw it.
+  if (S.view === 'network' && !S.network && S.papers.length) {
+    $('#main').innerHTML = '<div class="heading"><div><h1>Research network</h1><p class="loading">Drawing the network…</p></div></div>';
+    requestAnimationFrame(() => setTimeout(() => { if (S.view === 'network' && !S.network) render(); }, 0));
+  } else render();
   $('#main').focus({ preventScroll: true });
   window.scrollTo(0, 0);
 }

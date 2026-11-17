@@ -94,12 +94,20 @@ export function authorIndex(papers) {
 export const mainField = author => ranked(author.fields, 1)[0]?.[0] || '';
 
 // ---- filters -------------------------------------------------------------------
-export const EMPTY_FILTERS = Object.freeze({ q: '', families: [], fields: [], methods: [], data: [], journals: [], authors: [], period: 'all', from: '', to: '', run: '', saved: false, unread: false, followed: false, modelOnly: false });
+export const EMPTY_FILTERS = Object.freeze({ q: '', families: [], fields: [], methods: [], data: [], topics: [], journals: [], authors: [], period: 'all', from: '', to: '', run: '', saved: false, unread: false, followed: false, modelOnly: false, all: [], not: [] });
+// Pickers where a paper can carry several values, so "all of" makes sense.
+export const ALL_OF_FACETS = ['fields', 'methods', 'data', 'topics', 'authors'];
+// Pickers whose values can be excluded ("not"). Stored as "facet:key" in f.not.
+export const NOT_FACETS = ['fields', 'methods', 'data', 'topics', 'journals', 'authors'];
+/** Split an exclusion "facet:key" (author keys may themselves contain a colon). */
+export const splitNot = s => { const i = s.indexOf(':'); return [s.slice(0, i), s.slice(i + 1)]; };
 
 export function cleanFilters(raw) {
   const f = { ...EMPTY_FILTERS };
   if (!raw || typeof raw !== 'object') return f;
-  for (const k of ['families', 'fields', 'methods', 'data', 'journals', 'authors']) f[k] = arr(raw[k]).map(x => str(x, 80)).filter(Boolean).slice(0, 40);
+  for (const k of ['families', 'fields', 'methods', 'data', 'topics', 'journals', 'authors']) f[k] = arr(raw[k]).map(x => str(x, 80)).filter(Boolean).slice(0, 40);
+  f.all = [...new Set(arr(raw.all).filter(k => ALL_OF_FACETS.includes(k)))];
+  f.not = [...new Set(arr(raw.not).map(x => str(x, 90)).filter(x => NOT_FACETS.includes(splitNot(x)[0]) && splitNot(x)[1]))].slice(0, 40);
   f.q = str(raw.q, 200);
   f.period = ['all', '7d', '30d', '90d', '180d', '365d', 'custom'].includes(raw.period) ? raw.period : 'all';
   f.run = /^\d{4}-\d\d-\d\d$/.test(raw.run) ? raw.run : '';
@@ -108,7 +116,7 @@ export function cleanFilters(raw) {
   for (const k of ['saved', 'unread', 'followed', 'modelOnly']) f[k] = raw[k] === true;
   return f;
 }
-export const activeFilterCount = f => ['families', 'fields', 'methods', 'data', 'journals', 'authors'].reduce((n, k) => n + f[k].length, 0)
+export const activeFilterCount = f => ['families', 'fields', 'methods', 'data', 'topics', 'journals', 'authors'].reduce((n, k) => n + f[k].length, 0) + f.not.length
   + (f.q ? 1 : 0) + (f.period !== 'all' ? 1 : 0) + (f.run ? 1 : 0) + ['saved', 'unread', 'followed', 'modelOnly'].filter(k => f[k]).length;
 
 /** The paper's own date: publication date, or the day it was added when the index has none. */
@@ -142,17 +150,26 @@ export const queryTerms = q => fold(q).split(/\s+/).map(t => t.replace(/^["'(]+|
 export function filterPapers(papers, f, ctx, { user = {}, today = isoDay(Date.now()) } = {}) {
   const [from, to] = dateWindow(f, { today });
   const terms = queryTerms(f.q);
-  const any = (list, chosen) => !chosen.length || list.some(x => chosen.includes(x));
+  // Within a picker: any of the chosen values, or all of them when that picker is in "all of" mode.
+  const all = new Set(f.all || []);
+  const match = (facet, list, chosen) => !chosen.length || (all.has(facet) ? chosen.every(x => list.includes(x)) : list.some(x => chosen.includes(x)));
+  const values = (p, facet) => (facet === 'journals' ? [p.journal] : facet === 'authors' ? p.authors.map(authorKey) : p[facet]);
+  const nots = (f.not || []).map(splitNot);
   const followed = user.follow || {};
   return papers.filter(p => {
     if (from && paperDate(p) < from) return false;
     if (to && paperDate(p) > to) return false;
     if (f.run && p.added !== f.run) return false; // "added in this update", from the update chips
     // A field and a whole family are both "field" choices: either one matching is enough.
-    if ((f.fields.length || f.families.length) && !p.fields.some(k => f.fields.includes(k) || f.families.includes(ctx.familyOf(k)))) return false;
-    if (!any(p.methods, f.methods) || !any(p.data, f.data)) return false;
+    // In "all of" mode every chosen field must be there (a family still means any of its fields).
+    if (all.has('fields')) {
+      if (!f.fields.every(k => p.fields.includes(k))) return false;
+      if (f.families.length && !p.fields.some(k => f.families.includes(ctx.familyOf(k)))) return false;
+    } else if ((f.fields.length || f.families.length) && !p.fields.some(k => f.fields.includes(k) || f.families.includes(ctx.familyOf(k)))) return false;
+    if (!match('methods', p.methods, f.methods) || !match('data', p.data, f.data) || !match('topics', p.topics, f.topics || [])) return false;
     if (f.journals.length && !f.journals.includes(p.journal)) return false;
-    if (f.authors.length && !p.authors.some(a => f.authors.includes(authorKey(a)))) return false;
+    if (!match('authors', p.authors.map(authorKey), f.authors)) return false;
+    for (const [facet, key] of nots) if (values(p, facet).includes(key)) return false;
     if (f.saved && !user.saved?.[p.id]) return false;
     if (f.unread && user.read?.[p.id]) return false;
     if (f.followed && !p.authors.some(a => followed[authorKey(a)])) return false;
