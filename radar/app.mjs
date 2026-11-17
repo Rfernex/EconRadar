@@ -691,12 +691,12 @@ function renderNetwork(keep = false) {
          <label class="inline">Papers <select id="net-max">${[[150, '150'], [400, '400'], [800, '800'], [1500, '1,500'], [3000, '3,000'], [0, 'All (slower)']].map(([v, l]) => `<option value="${v}" ${S.prefs.maxPapers === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`
         : `<label class="inline">Authors with at least <select id="net-minauth">${[[0, 'auto'], [1, '1 paper'], [2, '2 papers'], [3, '3 papers']].map(([v, l]) => `<option value="${v}" ${S.prefs.minAuthorPapers === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
     $('#main').innerHTML = `<div class="heading"><div><h1>Research network</h1><p>${LENS_TEXT[lens]}</p></div>
-        <div class="net-head-tools"><div class="seg" role="group" aria-label="Lens">${Object.entries(LENSES).map(([k, l]) => `<button type="button" data-lens="${k}" aria-pressed="${lens === k}">${l}</button>`).join('')}</div>
-        <button type="button" class="btn ghost small" id="net-guide">How to read this graph</button></div></div>
+        <div class="seg" role="group" aria-label="Lens">${Object.entries(LENSES).map(([k, l]) => `<button type="button" data-lens="${k}" aria-pressed="${lens === k}">${l}</button>`).join('')}</div></div>
       <div class="toolbar" style="margin-bottom:12px">${opts}
         <label class="inline">Highlight new <select id="net-new">${[['auto', 'since last update'], ['30', 'past 30 days'], ['90', 'past 90 days'], ['none', 'off']].map(([v, l]) => `<option value="${v}" ${String(S.prefs.highlight) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <input type="search" id="net-find" placeholder="Find a node…" aria-label="Find a node in the network" style="min-width:170px">
-        <button type="button" class="btn ghost small" id="net-fit">Fit to view</button></div>
+        <button type="button" class="btn ghost small" id="net-fit">Fit to view</button>
+        <button type="button" class="btn small" id="net-guide">How to read this graph</button></div>
       <div class="net-layout"><div><div class="net-stage" id="net-stage"><div class="net-legend" aria-hidden="true">${legendHtml(lens)}</div></div>
         <div class="timeline"><button type="button" class="btn small" id="net-play" aria-pressed="false">▶ Replay history</button><input type="range" id="net-step" min="0" max="${Math.max(0, steps.length - 1)}" value="${S.net.step}" aria-label="Show papers published up to"><output id="net-when"></output></div></div>
         <aside class="net-side" id="net-side" aria-live="polite"></aside></div>`;

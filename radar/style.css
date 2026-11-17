@@ -279,7 +279,6 @@ dialog::backdrop{background:#0d16188a;backdrop-filter:blur(3px)}.dialog-close{di
 .tie-list{grid-template-columns:minmax(0,1fr)}.tie-list li{min-width:0}
 
 /* Network guide ("How to read this graph"): one step at a time, drawings use the theme roles */
-.net-head-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 dialog.guide{width:min(720px,calc(100vw - 24px));padding:22px 26px 18px}
 .guide-body{min-height:min(520px,62dvh)}
 .guide h2{margin:0 0 8px}.guide p,.guide li{color:var(--text-secondary);font-size:14px;line-height:1.6}.guide p{margin:0 0 10px}.guide ul{margin:0 0 10px;padding-left:18px}.guide li{margin:3px 0}
