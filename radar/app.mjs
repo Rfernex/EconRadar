@@ -1,5 +1,7 @@
-import * as C from './core.mjs?v=5';
+import * as C from './core.mjs?v=7';
 import { createNetwork } from './graph.mjs?v=1';
+import { connectZotero, saveZoteroPaper, zoteroPaperRef } from './zotero.mjs?v=1';
+import { mountSweeps } from './sweep.mjs?v=1';
 
 // ---- small helpers -------------------------------------------------------------
 const $ = (s, el = document) => el.querySelector(s);
@@ -9,7 +11,7 @@ const fmt = n => new Intl.NumberFormat('en-GB').format(n);
 const pct = x => (x < 0.1 ? `${(x * 100).toFixed(1)}%` : `${Math.round(x * 100)}%`);
 const dayLabel = (d, opts = { day: 'numeric', month: 'short', year: 'numeric' }) => (d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', opts) : '');
 const plural = (n, one, many = one + 's') => `${fmt(n)} ${n === 1 ? one : many}`;
-const KEYS = { user: 'radar.user.v1', filters: 'radar.filters.v1', prefs: 'radar.prefs.v1' };
+const KEYS = { user: 'radar.user.v1', filters: 'radar.filters.v1', prefs: 'radar.prefs.v1', zotero: 'radar.zotero.v1' };
 const local = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
@@ -35,7 +37,7 @@ const S = {
   ctx: null, config: null, index: { shards: [], runs: [] }, papers: [], visible: [], firsts: new Map(), allAuthors: new Map(),
   user: C.cleanUser(local.get(KEYS.user, {})), filters: C.cleanFilters(local.get(KEYS.filters, {})),
   prefs: Object.assign({ sort: 'published', match: 'all', lens: 'strands', highlight: 'auto', kinds: { field: true, method: true, data: true, topic: true }, minEdge: 2, maxTopics: 45, maxPapers: 400, minAuthorPapers: 0, trendFacet: 'methods', trendBy: 'quarter', trendScope: '', authorSort: 'papers' }, local.get(KEYS.prefs, {})),
-  today: C.isoDay(Date.now()), lastRun: '', prevVisit: '', view: 'latest', arg: '', limit: 30, network: null, net: {}, playing: 0,
+  today: C.isoDay(Date.now()), lastRun: '', prevVisit: '', view: 'latest', arg: '', limit: 30, spotlight: 0, network: null, net: {}, playing: 0,
 };
 const saveUser = () => local.set(KEYS.user, S.user);
 const savePrefs = () => local.set(KEYS.prefs, S.prefs);
@@ -62,6 +64,104 @@ function download(name, text, type = 'text/plain') {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// ---- Zotero settings and paper actions ----------------------------------------------
+const zoteroExports = new Map();
+const zoteroConnection = () => local.get(KEYS.zotero, null);
+const exportKey = (connection, ref) => `${connection?.userID}:${ref}`;
+const zoteroLabel = state => state === 'saving' ? 'Saving to Zotero…' : state === 'saved' ? 'Saved to Zotero' : 'Save to Zotero';
+
+function zoteroButton(paper, { focus = false, detail = false } = {}) {
+  const ref = zoteroPaperRef(paper);
+  const state = zoteroExports.get(exportKey(zoteroConnection(), ref));
+  return `<button type="button" class="${detail ? 'btn ghost small' : 'text-btn'}" data-zotero-paper="${esc(paper.id)}" data-zotero-ref="${esc(ref)}"${focus ? ' data-zotero-focus' : ''} aria-disabled="${!!state}">${zoteroLabel(state)}</button>`;
+}
+
+function updateZoteroButtons() {
+  const connection = zoteroConnection();
+  for (const button of $$('[data-zotero-paper]')) {
+    const state = zoteroExports.get(exportKey(connection, button.dataset.zoteroRef));
+    button.textContent = zoteroLabel(state);
+    button.setAttribute('aria-disabled', String(!!state));
+  }
+}
+
+function bindZotero() {
+  const settings = $('#settings-dialog'), form = $('#zotero-form'), input = $('#zotero-key');
+  const connect = $('#zotero-connect'), disconnect = $('#zotero-disconnect'), status = $('#zotero-status');
+  const updateSettings = (message = '') => {
+    const connection = zoteroConnection();
+    form.hidden = !!connection;
+    disconnect.hidden = !connection;
+    status.textContent = message || (connection ? `Connected as ${connection.username} · My Library` : '');
+    updateZoteroButtons();
+  };
+  const openSettings = () => {
+    updateSettings();
+    settings.showModal();
+    (form.hidden ? disconnect : input).focus();
+  };
+  $('#settings-toggle').addEventListener('click', openSettings);
+  settings.addEventListener('close', () => { input.value = ''; });
+  window.addEventListener('storage', e => { if (e.key === KEYS.zotero || e.key === null) updateSettings(); });
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (connect.disabled) return;
+    const key = input.value.trim();
+    if (!key) { status.textContent = 'Enter a Zotero API key.'; return; }
+    connect.disabled = input.readOnly = true;
+    status.textContent = 'Checking key…';
+    try {
+      const connection = await connectZotero(key);
+      if (!settings.open || input.value.trim() !== key) return;
+      if (!local.set(KEYS.zotero, connection)) throw new Error('This browser could not store the Zotero connection.');
+      input.value = '';
+      updateSettings();
+      disconnect.focus();
+    } catch (error) {
+      if (settings.open && input.value.trim() === key) status.textContent = error.message;
+    } finally {
+      connect.disabled = input.readOnly = false;
+    }
+  });
+  disconnect.addEventListener('click', () => {
+    try { localStorage.removeItem(KEYS.zotero); }
+    catch { status.textContent = 'This browser could not remove the Zotero connection.'; return; }
+    updateSettings('Zotero disconnected.');
+    input.focus();
+  });
+  document.addEventListener('click', async e => {
+    const button = e.target.closest('[data-zotero-paper]');
+    if (!button || button.getAttribute('aria-disabled') === 'true') return;
+    const connection = zoteroConnection();
+    if (!connection) { openSettings(); return; }
+    const { zoteroPaper: id, zoteroRef: ref } = button.dataset;
+    const paper = button.hasAttribute('data-zotero-focus') ? focusModule?.getPaper(id) : S.byId?.get(id);
+    if (!paper) return;
+    const detailStatus = () => $('#dialog').open && $(`[data-zotero-status="${CSS.escape(ref)}"]`);
+    const notify = message => {
+      const detail = detailStatus();
+      if (detail) detail.textContent = message;
+      else toast(message);
+    };
+    const key = exportKey(connection, ref);
+    zoteroExports.set(key, 'saving');
+    updateZoteroButtons();
+    const detail = detailStatus();
+    if (detail) detail.textContent = '';
+    try {
+      const venue = paper.venue || S.ctx.journals.get(paper.journal)?.name || paper.journal || '';
+      await saveZoteroPaper(connection, paper, venue);
+      zoteroExports.set(key, 'saved');
+      if (zoteroConnection()?.userID === connection.userID) notify('Reference saved to Zotero.');
+    } catch (error) {
+      zoteroExports.delete(key);
+      if (zoteroConnection()?.userID === connection.userID) notify(error.message);
+    } finally {
+      updateZoteroButtons();
+    }
+  });
 }
 
 // ---- loading ------------------------------------------------------------------------
@@ -243,7 +343,7 @@ function render(keepNetwork = false) {
   if (S.view === 'focus') return renderFocus();
   if (S.view === 'newsletter') return renderNewsletter();
   if (!S.papers.length && S.view !== 'sources') { main.innerHTML = emptyRadar(); return; }
-  if (S.view === 'latest') main.innerHTML = latestHtml();
+  if (S.view === 'latest') { main.innerHTML = latestHtml(); mountSweeps(main); const deck = $('.spotlight', main); if (deck && S.spotlight) spotlightGo(deck, S.spotlight); }
   else if (S.view === 'network') renderNetwork(keepNetwork);
   else if (S.view === 'authors') { main.innerHTML = authorsHtml(); }
   else if (S.view === 'author') main.innerHTML = authorHtml(S.arg);
@@ -356,10 +456,10 @@ function newsletterHtml(issue, focus = '') {
 }
 
 async function renderFocus() {
-  try { focusModule ||= await import('./focus.mjs?v=4'); }
+  try { focusModule ||= await import('./focus.mjs?v=5'); }
   catch (e) { $('#main').innerHTML = `<div class="empty"><h2>The Focus tab could not load</h2><p>${esc(e.message)}</p></div>`; return; }
   if (S.view !== 'focus') return;
-  focusModule.show($('#main'), { S, C, $, $$, esc, fmt, pct, plural, dayLabel, toast, download, showTip, hideTip, getJSON, local, renderNav, createNetwork });
+  focusModule.show($('#main'), { S, C, $, $$, esc, fmt, pct, plural, dayLabel, toast, download, showTip, hideTip, getJSON, local, renderNav, createNetwork, zoteroButton, zoteroPaperRef });
 }
 const emptyRadar = () => `<div class="empty"><h2>The radar is empty</h2><p>No papers have been collected yet. The collector runs every Tuesday and Friday; you can also start it by hand (see Sources).</p><a class="btn" href="#sources">Sources & setup</a></div>`;
 
@@ -404,7 +504,7 @@ function paperCard(p) {
     ${conclusion}
     <div class="p-tags">${tagChips(p)}</div>
     <div class="p-actions"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
-      <a href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}<button type="button" class="text-btn" data-act="open">Details</button></div>
+      <a href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}<button type="button" class="text-btn" data-act="open">Details</button>${zoteroButton(p)}</div>
   </article>`;
 }
 
@@ -416,6 +516,67 @@ function sortPapers(list) {
 }
 
 // ---- Latest -------------------------------------------------------------------------
+function latestSpotlight() {
+  const papers = [...S.visible].sort(C.newestFirst).slice(0, 3);
+  if (!papers.length) return '';
+  const active = S.spotlight % papers.length;
+  return `<section class="spotlight" aria-label="Most recently added papers">
+    <div class="spotlight-head"><div><span class="eyebrow">Fresh from the radar</span><h2>Recently added</h2><p>The three most recently imported papers in your current view.</p></div>
+      <div class="spotlight-controls"><button type="button" data-act="spotlight-prev" aria-label="Previous paper" ${papers.length < 2 ? 'disabled' : ''}>←</button><span aria-live="polite">${active + 1} / ${papers.length}</span><button type="button" data-act="spotlight-next" aria-label="Next paper" ${papers.length < 2 ? 'disabled' : ''}>→</button></div></div>
+    <div class="spotlight-deck"><div class="spotlight-track">${papers.map((p, i) => {
+      return `<article class="spotlight-card${i === active ? ' active' : ''}" data-spotlight-index="${i}" aria-hidden="${i !== active}"><span class="spotlight-index">0${i + 1} <span>· ${esc(journalShort(p.journal))}</span></span><h3>${esc(p.title)}</h3><p class="spotlight-authors">${esc(p.authors.map(a => a.n).slice(0, 3).join(' · '))}${p.authors.length > 3 ? ' et al.' : ''}</p><p class="spotlight-excerpt">${esc(p.q || p.summary || 'Open the paper for details.')}</p><div class="spotlight-bottom"><span>Added ${dayLabel(p.added)}</span><button type="button" data-open="${esc(p.id)}" ${i !== active ? 'tabindex="-1"' : ''}>View paper ↗</button></div></article>`;
+    }).join('')}</div></div></section>`;
+}
+// The deck slides in place (no re-render), so the move is animated.
+function spotlightGo(section, i) {
+  const cards = $$('.spotlight-card', section);
+  if (!cards.length) return;
+  S.spotlight = (i + cards.length) % cards.length;
+  cards.forEach((c, k) => {
+    const on = k === S.spotlight, b = $('[data-open]', c);
+    c.classList.toggle('active', on);
+    c.setAttribute('aria-hidden', String(!on));
+    if (on) b.removeAttribute('tabindex'); else b.setAttribute('tabindex', '-1');
+  });
+  $('.spotlight-track', section).style.transform = `translateX(${cards[0].offsetLeft - cards[S.spotlight].offsetLeft}px)`;
+  $('.spotlight-controls [aria-live]', section).textContent = `${S.spotlight + 1} / ${cards.length}`;
+}
+const spotlightStep = (section, d) => spotlightGo(section, S.spotlight + d);
+// Swipe on touch screens: a horizontal drag of 40px or more turns the deck.
+function bindSpotlightSwipe() {
+  let x0 = null, y0 = 0;
+  $('#main').addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse' && e.target.closest('.spotlight-deck')) { x0 = e.clientX; y0 = e.clientY; } });
+  $('#main').addEventListener('pointerup', e => {
+    if (x0 === null) return;
+    const dx = e.clientX - x0, dy = e.clientY - y0;
+    x0 = null;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) spotlightStep(e.target.closest('.spotlight') || $('.spotlight'), dx < 0 ? 1 : -1);
+  });
+  $('#main').addEventListener('pointercancel', () => { x0 = null; });
+  // The track position is in pixels: keep the active card aligned when the width changes.
+  window.addEventListener('resize', () => { const sec = $('.spotlight'); if (sec) spotlightGo(sec, S.spotlight); });
+}
+
+// ---- theme: dark by default, light on request; the choice stays on this device ----------
+const THEME_KEY = 'econradar-theme';
+function bindTheme() {
+  const btn = $('#theme-toggle');
+  const show = () => {
+    const light = document.documentElement.dataset.theme === 'light';
+    btn.setAttribute('aria-label', light ? 'Switch to dark theme' : 'Switch to light theme');
+    btn.title = light ? 'Dark theme' : 'Light theme';
+    $('meta[name="theme-color"]')?.setAttribute('content', light ? '#ffffff' : '#0e0f11');
+  };
+  btn.addEventListener('click', () => {
+    const light = document.documentElement.dataset.theme !== 'light';
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    try { localStorage.setItem(THEME_KEY, light ? 'light' : 'dark'); } catch {}
+    show();
+    if (S.config?.journals) render(S.view === 'network'); // charts and the network read their colours when drawn
+  });
+  show();
+}
+
 function latestHtml() {
   const list = sortPapers(S.visible), shown = list.slice(0, S.limit);
   const sinceVisit = S.prevVisit ? S.papers.filter(isNewToYou).length : 0;
@@ -436,7 +597,7 @@ function latestHtml() {
     body += paperCard(p);
   }
   if (S.prefs.sort === 'added' && body) body += '</div>'; else body = `<div class="papers">${body}</div>`;
-  return `<div class="heading"><div><span class="eyebrow">${S.lastRun ? 'Updated ' + dayLabel(S.lastRun) : 'EconRadar'}</span><h1>Latest papers</h1>
+  return `<div class="heading has-sweep"><canvas class="sweep-field" aria-hidden="true"></canvas><div><span class="eyebrow">${S.lastRun ? 'Updated ' + dayLabel(S.lastRun) : 'EconRadar'}</span><h1>Latest papers</h1>
       <p>New articles from ${S.config.journals.filter(j => j.enabled !== false && j.kind !== 'working').length} journals${S.config.journals.some(j => j.enabled !== false && j.kind === 'working') ? ' and ' + S.config.journals.filter(j => j.enabled !== false && j.kind === 'working').map(j => j.short.replace(/ WP$/, '')).join(', ') + ' working papers' : ''}, each with its research question, a summary, and tags for field, method and data. Click any tag to filter by it.</p></div>
       <div class="toolbar"><select id="sort" aria-label="Sort papers">${[['added', 'Date added'], ['published', 'Publication date'], ['journal', 'Journal']].map(([v, l]) => `<option value="${v}" ${S.prefs.sort === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="export" aria-label="Export these papers"><option value="">Export…</option><option value="bib">BibTeX</option><option value="ris">RIS (Zotero)</option><option value="csv">CSV</option></select></div></div>
@@ -445,6 +606,7 @@ function latestHtml() {
       <div class="stat"><strong>${pct(modelShare)}</strong><span>summarised by the model; the rest are auto-extracted</span></div>
       <div class="stat"><strong>${fmt(new Set(S.visible.map(p => p.journal)).size)}</strong><span>journals represented</span></div></div>
     ${runs.length > 1 ? `<div class="chips" aria-label="Recent updates">${runs.map(r => `<button type="button" class="chip btnish" data-act="run" data-day="${r.at.slice(0, 10)}" aria-pressed="${S.filters.run === r.at.slice(0, 10)}" title="Papers added in this update">${dayLabel(r.at.slice(0, 10), { day: 'numeric', month: 'short' })} · ${plural(r.added, 'paper')}</button>`).join('')}</div>` : ''}
+    ${latestSpotlight()}
     ${shown.length ? body : '<div class="empty"><h2>Nothing matches these filters</h2><p>Loosen a filter above, or clear them all.</p></div>'}
     ${list.length > shown.length ? `<div class="load-more"><button type="button" class="btn ghost" data-act="more">Show ${Math.min(30, list.length - shown.length)} more of ${fmt(list.length - shown.length)}</button></div>` : ''}`;
 }
@@ -495,7 +657,8 @@ function openPaper(id) {
     ${p.abstract ? `<details class="more"><summary>Abstract excerpt (as indexed)</summary><p class="p-summary">${esc(p.abstract)}</p></details>` : ''}
     <div class="p-actions" style="margin:14px 0" data-id="${esc(p.id)}"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
       <a class="btn small" href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>${p.pdf ? `<a class="btn ghost small" href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}
-      <button type="button" class="btn ghost small" data-act="cite">Copy BibTeX</button><button type="button" class="btn ghost small" data-act="in-network">Show in network</button></div>
+      <button type="button" class="btn ghost small" data-act="cite">Copy BibTeX</button>${zoteroButton(p, { detail: true })}<button type="button" class="btn ghost small" data-act="in-network">Show in network</button></div>
+    <p class="small" role="status" data-zotero-status="${esc(zoteroPaperRef(p))}"></p>
     ${(flag => flag ? `<p class="small muted flag-line">Something inaccurate in this summary? <a href="${esc(flag)}" target="_blank" rel="noopener">Flag it, with a note ↗</a></p>` : '')(C.flagUrl(S.config.feedback?.form, p))}
     <label class="small muted" for="note">Your note (stays on this device)</label><textarea id="note" data-note="${esc(p.id)}" placeholder="Why it matters, what to check, how it relates to your work…">${esc(S.user.notes[p.id] || '')}</textarea>
     ${(() => { const rel = related(p); return rel.length ? `<h3 style="margin-top:18px">Related papers in the radar</h3>${rel.map(q => `<div class="mini-paper"><button type="button" data-open="${esc(q.id)}">${esc(q.title)}</button><small>${esc(journalShort(q.journal))} · ${dayLabel(q.published || q.added)}</small></div>`).join('')}` : ''; })()}`;
@@ -513,6 +676,9 @@ function onMainClick(e) {
   if (t.dataset.goto) { location.hash = t.dataset.goto; return; }
   if (t.dataset.nlFam) { const list = nlFamilies(), k = t.dataset.nlFam; S.prefs.nlFamilies = list.includes(k) ? list.filter(x => x !== k) : [...list, k]; savePrefs(); renderNewsletter(); return; }
   const card = t.closest('[data-id]'), id = card?.dataset.id, act = t.dataset.act;
+  if (act === 'spotlight-prev' || act === 'spotlight-next') return spotlightStep(t.closest('.spotlight'), act === 'spotlight-next' ? 1 : -1);
+  const peek = t.closest('.spotlight-card:not(.active)');
+  if (peek && !t.dataset.open) return spotlightGo(peek.closest('.spotlight'), +peek.dataset.spotlightIndex);
   if (act === 'open') openPaper(id);
   else if (act === 'save' || act === 'read') {
     const key = act === 'save' ? 'saved' : 'read', on = !S.user[key][id];
@@ -675,6 +841,13 @@ function sidePanel() {
   }
   const list = n.kind === 'paper' ? [n.paper] : C.papersForNode(n, papers);
   const ties = S.network.linksOf(n.id).map(l => ({ other: l.source.id === n.id ? l.target : l.source, w: l.weight, isNew: l.isNew, why: l.why || [] })).sort((a, b) => b.w - a.w);
+  const matchCounts = new Map();
+  if (n.kind === 'paper') ties.forEach(t => [...new Set(t.why)].forEach(key => matchCounts.set(key, (matchCounts.get(key) || 0) + 1)));
+  const matching = [...matchCounts].sort((a, b) => b[1] - a[1]);
+  const allMatches = n.kind === 'paper' ? C.paperFeatureMatches(n.paper, papers, S.ctx, S.prefs.match) : new Map();
+  const scope = n.id + ':' + S.prefs.match;
+  if (S.net.matchScope !== scope) { S.net.matchScope = scope; S.net.matchKey = ''; S.net.matchLimit = 30; }
+  const selectedMatches = allMatches.get(S.net.matchKey) || [];
   const prev = S.net.prev && S.network.node(S.net.prev);
   const pair = prev && prev.kind !== 'paper' && n.kind !== 'paper' ? C.papersForLink(prev, n, papers) : [];
   const authors = n.kind === 'author' || n.kind === 'paper' ? [] : C.ranked(list.reduce((o, p) => { p.authors.forEach(a => { o[a.n] = (o[a.n] || 0) + 1; }); return o; }, {}), 6);
@@ -684,8 +857,10 @@ function sidePanel() {
       ${n.kind === 'paper' ? `<p class="p-summary">${esc(n.paper.q || n.paper.summary)}</p><div class="toolbar"><button type="button" class="btn small" data-open="${esc(n.paper.id)}">Open paper</button></div>`
       : `<p class="small muted">${plural(list.length, 'paper')} in view${n.isNew ? ' · <b>new</b>' : ''}</p>${sparkline(list)}
         <div class="toolbar" style="margin-top:10px">${filterKey ? `<button type="button" class="btn small" data-net-filter="${filterKey}" data-key="${esc(n.key)}">Filter everything by this</button>` : `<button type="button" class="btn small" data-net-search="${esc(n.key)}">Search this topic</button>`}${n.kind === 'author' ? `<a class="btn ghost small" href="#author/${encodeURIComponent(n.key)}">Profile</a>` : ''}</div>`}</div>
+    ${n.kind === 'paper' ? `<div class="panel"><span class="kind">Matched on · ${esc((C.MATCHES[S.prefs.match] || C.MATCHES.all).label)}</span>${matching.length ? `<div class="match-features">${matching.map(([key, count]) => `<span class="match-feature"><strong>${esc(C.describeShared([key], S.ctx, [n.paper])[0])}</strong><small>${plural(count, 'linked paper')}</small></span>`).join('')}</div>` : '<p class="small muted">No linked papers in the current network.</p>'}</div>` : ''}
+    ${n.kind === 'paper' ? `<div class="panel"><span class="kind">Find all papers sharing a feature</span><p class="small muted">Includes papers in the current filters and timeline, including those outside the graph or below its link threshold.</p><label class="inline">Shared feature <select id="net-all-feature"><option value="">Choose a feature…</option>${[...allMatches].map(([key, found]) => `<option value="${esc(key)}" ${S.net.matchKey === key ? 'selected' : ''}>${esc(C.describeShared([key], S.ctx, [n.paper])[0])} · ${plural(found.length, 'paper')}</option>`).join('')}</select></label>${S.net.matchKey ? `<p class="small muted">${plural(selectedMatches.length, 'matching paper')}</p>${selectedMatches.length ? miniPapers(selectedMatches, S.net.matchLimit) : '<p class="small muted">No other papers share this feature.</p>'}${selectedMatches.length > S.net.matchLimit ? `<button type="button" class="btn ghost small" data-net-all-more>Show more (${fmt(selectedMatches.length - S.net.matchLimit)} remaining)</button>` : ''}` : ''}</div>` : ''}
     ${pair.length ? `<div class="panel"><span class="kind">Papers combining</span><h3>${esc(prev._label)} + ${esc(n._label)}</h3>${miniPapers(pair, 6)}</div>` : ''}
-    ${ties.length ? `<div class="panel"><span class="kind">Ties · click one, then another to see papers combining them</span><ul class="tie-list">${ties.slice(0, 14).map(t => `<li><button type="button" data-select="${esc(t.other.id)}">${esc(t.other._label)}${t.why.length ? `<small class="muted shared">shares: ${esc(C.describeShared(t.why, S.ctx, [n.paper, t.other.paper].filter(Boolean)).join(', '))}</small>` : ''}</button>${t.isNew ? '<span class="new-tag">NEW</span>' : ''}<span class="w">${S.prefs.lens === 'papers' ? '' : fmt(Math.round(t.w * 10) / 10)}</span></li>`).join('')}</ul></div>` : ''}
+    ${ties.length ? `<div class="panel"><span class="kind">${n.kind === 'paper' ? 'Linked papers and shared matches' : 'Ties · click one, then another to see papers combining them'}</span><ul class="tie-list">${ties.slice(0, 14).map(t => `<li><button type="button" data-select="${esc(t.other.id)}">${esc(t.other._label)}${t.why.length ? `<small class="shared">Shares: <strong>${esc(C.describeShared(t.why, S.ctx, [n.paper, t.other.paper].filter(Boolean)).join(', '))}</strong></small>` : ''}</button>${t.isNew ? '<span class="new-tag">NEW</span>' : ''}<span class="w">${S.prefs.lens === 'papers' ? '' : fmt(Math.round(t.w * 10) / 10)}</span></li>`).join('')}</ul></div>` : ''}
     ${authors.length ? `<div class="panel"><span class="kind">Most active authors here</span><ul class="tie-list">${authors.map(([name, c]) => `<li><span style="flex:1">${esc(name)}</span><span class="w">${c}</span></li>`).join('')}</ul></div>` : ''}
     ${n.kind !== 'paper' ? `<div class="panel"><span class="kind">Latest papers</span>${miniPapers(list, 6)}</div>` : ''}`;
 }
@@ -694,6 +869,7 @@ function onNetworkEvent(e) {
   const t = e.target;
   if (e.type === 'click') {
     const b = t.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-net-all-more')) { S.net.matchLimit += 30; sidePanel(); return; }
     if (b.dataset.lens) { S.prefs.lens = b.dataset.lens; savePrefs(); S.net.selected = null; stopPlay(); renderNetwork(); }
     else if (b.dataset.kindToggle) { const k = b.dataset.kindToggle; S.prefs.kinds[k] = !S.prefs.kinds[k]; if (!Object.values(S.prefs.kinds).some(Boolean)) S.prefs.kinds.field = true; savePrefs(); b.setAttribute('aria-pressed', String(!!S.prefs.kinds[k])); drawNetwork(); }
     else if (b.id === 'net-fit') S.network?.fit();
@@ -713,6 +889,7 @@ function onNetworkEvent(e) {
     if (t.id === 'net-min') { S.prefs.minEdge = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-topics') { S.prefs.maxTopics = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-max') { S.prefs.maxPapers = +t.value; savePrefs(); drawNetwork(); }
+    if (t.id === 'net-all-feature') { S.net.matchKey = t.value; S.net.matchLimit = 30; sidePanel(); }
     if (t.id === 'net-match') { S.prefs.match = t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-minauth') { S.prefs.minAuthorPapers = +t.value; savePrefs(); drawNetwork(); }
     if (t.id === 'net-new') { S.prefs.highlight = t.value; savePrefs(); drawNetwork(); }
@@ -946,10 +1123,12 @@ function sideStatus() {
 }
 
 async function start() {
+  bindTheme();
+  bindZotero();
   renderNav();
   try { await load(); }
   catch (e) { $('#main').innerHTML = `<div class="empty"><h2>The radar could not load</h2><p>${esc(e.message)}</p></div>`; return; }
-  renderFilters(); bindFilters(); bindMain(); sideStatus();
+  renderFilters(); bindFilters(); bindMain(); bindSpotlightSwipe(); sideStatus();
   window.addEventListener('hashchange', route);
   if (!S.config.journals) return;
   S.visible = C.filterPapers(S.papers, S.filters, S.ctx, { user: S.user, today: S.today });

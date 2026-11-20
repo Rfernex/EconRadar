@@ -39,6 +39,7 @@ export async function show(main, api) {
   render();
 }
 export function leave() { stopPlay(); if (st.net) { st.net.destroy(); st.net = null; } }
+export function getPaper(id) { return st.F?.byId.get(id); }
 
 function setF(mut, { keepTab = true } = {}) {
   mut(st.f); st.f = FC.cleanFocusFilters(st.f, st.spec); A.local.set(KEYS.filters, st.f); st.limit = 40;
@@ -202,7 +203,7 @@ function card(p) {
     ${p.summary ? `<p class="p-summary">${esc(p.summary)}</p>` : p.abstract ? `<details class="more"><summary>Abstract</summary><p class="p-summary">${esc(p.abstract)}</p></details>` : ''}
     <div class="p-tags">${p.strands.map(s => `<button type="button" class="chip btnish" data-fstrand="${s}">${dot(s)}${esc(strandLabel(s))}</button>`).join('')}${p.outcomes.map(o => `<button type="button" class="chip btnish topic" data-foutcome="${o}">${esc(outcomeLabel(o))}</button>`).join('')}</div>
     <div class="p-actions"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
-      ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>` : ''}${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}<button type="button" class="text-btn" data-fopen="${esc(p.id)}">Details & links</button></div>
+      ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>` : ''}${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}<button type="button" class="text-btn" data-fopen="${esc(p.id)}">Details & links</button>${A.zoteroButton(p, { focus: true })}</div>
   </article>`;
 }
 function lines(p, design = []) {
@@ -325,7 +326,8 @@ function openPaper(id) {
     </dl>
     <div class="p-actions" style="margin:14px 0" data-id="${esc(p.id)}"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
       ${p.url ? `<a class="btn small" href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>` : ''}${p.pdf ? `<a class="btn ghost small" href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}
-      <button type="button" class="btn ghost small" data-fcite="${esc(p.id)}">Copy BibTeX</button><button type="button" class="btn ghost small" data-fmap="${esc(p.id)}">Show in citation map</button></div>
+      <button type="button" class="btn ghost small" data-fcite="${esc(p.id)}">Copy BibTeX</button>${A.zoteroButton(p, { focus: true, detail: true })}<button type="button" class="btn ghost small" data-fmap="${esc(p.id)}">Show in citation map</button></div>
+    <p class="small" role="status" data-zotero-status="${esc(A.zoteroPaperRef(p))}"></p>
     <label class="small muted" for="note">Your note (stays on this device)</label><textarea id="note" data-note="${esc(p.id)}" placeholder="How it relates to your project, what to check…">${esc(A.S.user.notes[p.id] || '')}</textarea>
     ${list('Builds on, within this literature', cites)}${list('Cited here by', by, q => A.dayLabel(q.published, { month: 'short', year: 'numeric' }))}
     ${near.length ? `<h3 style="margin-top:18px">Shares references with</h3>${near.map(({ paper: q, shared }) => `<div class="mini-paper"><button type="button" data-fopen="${esc(q.id)}">${esc(q.title)}</button><small>${dot(q.strands[0])}${esc(FC.shortLabel(q))} · ${shared} shared references</small></div>`).join('')}` : ''}`;

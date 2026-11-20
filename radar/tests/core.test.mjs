@@ -96,6 +96,15 @@ test('paper ties can be restricted to one kind of match, and say what is shared'
   assert.equal(C.normalizePaper({ id: 'X', title: 'T', doi: '10.1/x' }, ctx).url, 'https://doi.org/10.1/x');
 });
 
+test('all feature matches include papers beyond graph limits and common-feature cutoff', () => {
+  const list = Array.from({ length: 305 }, (_, i) => paper(`P${i}`, { methods: ['did'], topics: [i === 1 ? 'shared topic' : 'other'] }));
+  const matches = C.paperFeatureMatches(list[0], list, ctx, 'ident');
+  assert.equal(matches.get('m:did').length, 304);
+  assert.ok(!matches.get('m:did').some(p => p.id === list[0].id));
+  assert.equal(C.paperGraph(list, ctx, { match: 'ident', max: 300 }).links.length, 0);
+  assert.ok(!C.paperFeatureMatches(list[0], list, ctx, 'data').has('m:did'));
+});
+
 test('author graph and index tie authors to fields and co-authors', () => {
   const two = [{ n: 'Ada Lovelace', id: 'A1' }, { n: 'Grace Hopper', id: 'A2' }];
   const list = [paper('W1', { authors: two }), paper('W2', { authors: two, fields: ['econ-history', 'labour'] })];
@@ -145,11 +154,11 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v12'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v14', 'reading-room-v26', 'econradar-v15'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
-  assert.deepEqual(deleted, ['econradar-v11']);
+  assert.deepEqual(deleted, ['econradar-v14']);
   let response; handlers.fetch({ request: { url: 'https://example.org/Apps/radar/data/index.json', method: 'GET', mode: 'cors' }, respondWith: r => { response = r; } });
   assert.equal(await response, 'cached');
 });

@@ -4,7 +4,7 @@ Every paper since 2020 from 20 leading economics journals and NBER, updated week
 
 ## What it does
 
-The app is read-only for visitors: they browse, filter, save papers on their own device and subscribe to the newsletter. All collecting and summarising happens in the weekly update.
+Visitors can browse, filter, save papers on their own device, send references to Zotero and subscribe to the newsletter. All collecting and summarising happens in the weekly update.
 
 - **Latest**: every new paper with its research question, a 2–3 sentence summary, what the conclusion says (when an open-access copy could be read), and tags for field, method, data, topics. Papers new since your last visit are marked. Save, mark read, add a private note, export BibTeX / RIS / CSV.
 - **Network**, three lenses on whatever the filters select:
@@ -85,6 +85,8 @@ python3 tools/collect_focus.py --budget 60     # more searches (with an OpenAlex
 ## Personal data
 
 Saved papers, read marks, notes, followed authors and the date of your last visit live in this browser's `localStorage` only. **Sources → Save a backup** downloads them as JSON; **Restore a backup** loads them on another device.
+
+To save a reference directly to Zotero, open **Settings → Zotero** and connect a [dedicated API key](https://www.zotero.org/settings/keys/new) with personal library access and write permissions. Choose **Save to Zotero** on a paper card or in its details. Zotero receives the available citation metadata in **My Library**. The paper link is included and PDFs are handled separately. The API key stays in this browser and is excluded from backups. **Disconnect Zotero** removes the key from this browser.
 
 ## Checks
 
