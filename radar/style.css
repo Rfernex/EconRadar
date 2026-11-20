@@ -6,7 +6,7 @@
 @font-face{font-family:"IBM Plex Mono";font-weight:400 600;font-style:normal;font-display:swap;src:url(vendor/plex/IBMPlexMono-Medium.woff2) format("woff2")}
 :root{color-scheme:dark;--sans:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
  --paper:#0e0f11;--card:#15161a;--surface-1:#15161a;--rail:#121316;--ink:#eceef1;--text-primary:#eceef1;--text-secondary:#b6bac2;--muted:#868b94;--line:#2a2c32;--line-soft:#1f2126;
- --accent:#1f3fff;--accent-ink:#ffffff;--accent-soft:#121a40;--accent-hi:#5c79ff;--focus:#5c79ff;--shadow:none;
+ --accent:#1f3fff;--accent-ink:#ffffff;--accent-soft:#121a40;--accent-hi:#3d74ff;--focus:#3d74ff;--shadow:none;
  --net-edge:#5c6068;--net-new:#f2f3f5;--net-muted:#33363d;--kind-method:#d4d7dd;--kind-data:#8a8e96;
  --series-1:#3987e5;--series-2:#d95926;--series-3:#199e70;--series-4:#c98500;--series-5:#d55181;--series-6:#008300;--series-7:#9085e9;--series-8:#e66767;--series-other:#7d827c;
  --seq-1:#1a2c40;--seq-2:#104281;--seq-3:#184f95;--seq-4:#256abf;--seq-5:#3987e5;--seq-6:#6da7ec;--seq-7:#9ec5f4;

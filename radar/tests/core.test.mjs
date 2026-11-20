@@ -171,7 +171,7 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v20'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v21'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
