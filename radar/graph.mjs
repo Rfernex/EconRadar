@@ -16,7 +16,7 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
   const reduce = matchMedia('(prefers-reduced-motion: reduce)');
   let width = 0, height = 0, dpr = 1, transform = d3.zoomIdentity;
   let nodes = [], links = [], byId = new Map(), adjacency = new Map();
-  let style = {}, opts = {}, selected = null, hovered = null, frame = 0, fitted = false;
+  let style = {}, opts = {}, selected = null, hovered = null, marked = null, frame = 0, fitted = false;
   const sim = d3.forceSimulation().alphaDecay(0.03).velocityDecay(0.35).stop();
 
   const radius = n => n._r;
@@ -60,12 +60,14 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
     ctx2d.scale(k, k);
     const focus = selected || hovered;
     const near = focus ? adjacency.get(focus.id) || new Set() : null;
+    // A marked set (papers picked in the side panel) stays lit when nothing is focused.
+    const mark = !focus && marked && marked.size ? marked : null;
     const maxW = opts.maxWeight || 1;
 
     // Links: recessive by default; new ones in ink, focused ones stronger.
     for (const l of links) {
-      const on = focus && (l.source === focus || l.target === focus);
-      const dim = focus && !on;
+      const on = focus ? l.source === focus || l.target === focus : mark ? mark.has(l.source.id) && mark.has(l.target.id) : false;
+      const dim = (focus || mark) && !on;
       const w = 0.6 + 2.4 * Math.sqrt(l.weight / maxW);
       ctx2d.globalAlpha = dim ? 0.06 : on ? 0.9 : l.isNew && opts.showNew ? 0.85 : 0.18 + 0.4 * (l.weight / maxW);
       ctx2d.strokeStyle = l.isNew && opts.showNew ? style.newInk : on ? style.soft : style.edge;
@@ -77,7 +79,7 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
 
     // Nodes: fill, 2px surface ring so overlaps stay legible, ink ring when new.
     for (const n of nodes) {
-      const dim = focus && n !== focus && !near.has(n.id);
+      const dim = focus ? n !== focus && !near.has(n.id) : mark ? !mark.has(n.id) : false;
       const r = radius(n);
       ctx2d.globalAlpha = dim ? 0.18 : 1;
       shape(n, r);
@@ -87,9 +89,9 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
       ctx2d.strokeStyle = style.surface;
       ctx2d.stroke();
       if (n._hollow) { shape(n, Math.max(r - 3 / k, r * 0.45)); ctx2d.fillStyle = style.surface; ctx2d.fill(); }
-      if ((n.isNew && opts.showNew) || n === selected) {
+      if ((n.isNew && opts.showNew) || n === selected || (mark && mark.has(n.id))) {
         shape(n, r + 3.5 / k);
-        ctx2d.lineWidth = (n === selected ? 2.5 : 1.6) / k;
+        ctx2d.lineWidth = (n === selected || mark ? 2.5 : 1.6) / k;
         ctx2d.strokeStyle = style.newInk;
         ctx2d.stroke();
       }
@@ -103,11 +105,11 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
     const font = 11.5 / k;
     ctx2d.font = `500 ${font}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx2d.lineJoin = 'round';
-    const rank = n => (n === focus ? 3 : near && near.has(n.id) ? 2 : n._labelAlways ? 1 : 0) * 1e6 + radius(n);
+    const rank = n => (n === focus ? 3 : (near && near.has(n.id)) || (mark && mark.has(n.id)) ? 2 : n._labelAlways ? 1 : 0) * 1e6 + radius(n);
     const placed = [];
     for (const n of [...nodes].sort((a, b) => rank(b) - rank(a))) {
       const r = radius(n);
-      const show = n === focus || (near && near.has(n.id) && (n._labelAlways || r * k > 5)) || (!focus && (r * k >= (opts.labelAt || 11) || n._labelAlways));
+      const show = n === focus || (near && near.has(n.id) && (n._labelAlways || r * k > 5)) || (mark && mark.has(n.id) && (mark.size <= 30 || r * k > 5)) || (!focus && !mark && (r * k >= (opts.labelAt || 11) || n._labelAlways));
       if (!show) continue;
       let text = n._label;
       if (text.length > 42) text = text.slice(0, 40) + '…';
@@ -210,17 +212,23 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
     }
     // Bigger graphs need more room: stronger repulsion, longer and softer links.
     const big = Math.min(1, nodes.length / 120);
+    // Very large graphs (the whole database): a coarser approximation, no overlap pass and a
+    // short warm-up (about 1 s for 20,000 papers instead of ~28 s); the layout then keeps
+    // settling on screen instead of freezing the page.
+    const huge = nodes.length > 3000;
+    const warm = huge ? Math.max(6, Math.round(240000 / nodes.length)) : 90;
+    sim.alphaDecay(huge ? 0.05 : 0.03);
     const linkDist = l => 30 + 30 * big + radius(l.source) + radius(l.target) + 40 / Math.sqrt(l.weight);
     sim.nodes(nodes)
       .force('link', d3.forceLink(links).id(n => n.id).distance(linkDist).strength(l => Math.min(0.7, 0.04 + (0.5 - 0.3 * big) * Math.sqrt(l.weight / opts.maxWeight))))
-      .force('charge', d3.forceManyBody().strength(n => -(30 + 40 * big) - (5 + 6 * big) * radius(n)).distanceMax(600))
-      .force('collide', d3.forceCollide(n => radius(n) + 3).iterations(2))
+      .force('charge', d3.forceManyBody().strength(n => -(30 + 40 * big) - (5 + 6 * big) * radius(n)).distanceMax(600).theta(huge ? 1.6 : 0.9))
+      .force('collide', huge ? null : d3.forceCollide(n => radius(n) + 3).iterations(2)) // overlap checks are too costly at that size
       .force('x', d3.forceX(0).strength(0.045)).force('y', d3.forceY(0).strength(0.045));
     const fresh = known < nodes.length * 0.5;
-    if (fresh) { fitted = false; sim.alpha(1); sim.tick(reduce.matches ? 300 : 90); }
+    if (fresh) { fitted = false; sim.alpha(1); sim.tick(reduce.matches ? (huge ? warm * 3 : 300) : warm); }
     else sim.alpha(Math.min(0.5, 0.12 + (nodes.length - known) / Math.max(10, nodes.length)));
     selected = prevSelected ? byId.get(prevSelected) || null : null;
-    if (reduce.matches) { sim.tick(200); sim.stop(); for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y }); fit(false); draw(); }
+    if (reduce.matches) { sim.tick(huge ? warm : 200); sim.stop(); for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y }); fit(false); draw(); }
     else sim.restart();
     if (fresh && !reduce.matches) { fit(false); }
     draw();
@@ -247,6 +255,7 @@ export function createNetwork(host, { onSelect = () => {}, onHover = () => {}, l
 
   return {
     render, select, find, fit, resize, center,
+    mark: ids => { marked = ids && ids.size ? ids : null; schedule(); },
     neighbours: id => [...(adjacency.get(id) || [])].map(x => byId.get(x)),
     linksOf: id => links.filter(l => l.source.id === id || l.target.id === id),
     node: id => byId.get(id),

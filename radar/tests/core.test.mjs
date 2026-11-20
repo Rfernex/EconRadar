@@ -96,6 +96,23 @@ test('paper ties can be restricted to one kind of match, and say what is shared'
   assert.equal(C.normalizePaper({ id: 'X', title: 'T', doi: '10.1/x' }, ctx).url, 'https://doi.org/10.1/x');
 });
 
+test('several criteria at once link only papers that share something on each', () => {
+  const list = [
+    paper('P1', { topics: ['minimum wage'], methods: ['did'], authors: [{ n: 'A', id: 'A1' }] }),
+    paper('P2', { topics: ['minimum wage'], methods: ['rdd'], authors: [{ n: 'B', id: 'B1' }] }),
+    paper('P3', { topics: ['trade'], fields: ['international'], methods: ['did'], authors: [{ n: 'C', id: 'C1' }] }),
+    paper('P5', { topics: ['minimum wage'], methods: ['did'], authors: [{ n: 'D', id: 'D1' }] }),
+  ];
+  const ends = match => C.paperGraph(list, ctx, { match }).links.map(l => [l.source, l.target].sort().join());
+  const both = ends(['topic', 'ident']);
+  assert.ok(both.includes('P1,P5'));
+  assert.ok(!both.includes('P1,P2') && !both.includes('P1,P3'));
+  assert.deepEqual(C.matchCriteria(['topic', 'all']), ['all']);
+  assert.deepEqual(C.matchCriteria([]), ['all']);
+  assert.equal(C.matchLabel(['topic', 'data']), 'Topic & literature + Data');
+  assert.ok(C.paperFeatureMatches(list[0], list, ctx, ['topic', 'ident']).has('m:did'));
+});
+
 test('all feature matches include papers beyond graph limits and common-feature cutoff', () => {
   const list = Array.from({ length: 305 }, (_, i) => paper(`P${i}`, { methods: ['did'], topics: [i === 1 ? 'shared topic' : 'other'] }));
   const matches = C.paperFeatureMatches(list[0], list, ctx, 'ident');
@@ -154,11 +171,11 @@ test('service worker serves paper data network-first and retires only its own ca
   const handlers = {}, deleted = [];
   const store = { addAll: async () => {}, put: async () => {} };
   const scope = { self: { addEventListener: (n, h) => { handlers[n] = h; }, skipWaiting: async () => {}, clients: { claim: async () => {} } },
-    caches: { open: async () => store, keys: async () => ['econradar-v14', 'reading-room-v26', 'econradar-v15'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
+    caches: { open: async () => store, keys: async () => ['econradar-v11', 'reading-room-v26', 'econradar-v19'], delete: async k => { deleted.push(k); return true; }, match: async () => 'cached' },
     location: { origin: 'https://example.org' }, URL, fetch: async () => { throw new Error('offline'); } };
   runInNewContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), scope);
   let p; handlers.activate({ waitUntil: x => { p = x; } }); await p;
-  assert.deepEqual(deleted, ['econradar-v14']);
+  assert.deepEqual(deleted, ['econradar-v11']);
   let response; handlers.fetch({ request: { url: 'https://example.org/Apps/radar/data/index.json', method: 'GET', mode: 'cors' }, respondWith: r => { response = r; } });
   assert.equal(await response, 'cached');
 });
@@ -169,4 +186,52 @@ test('the flag link pre-fills the Google Form with the paper, and only a Google 
   assert.equal(C.flagUrl(form, p), 'https://docs.google.com/forms/d/e/abc/viewform?usp=pp_url&entry.1=W1&entry.2=Wages%20%26%20Jobs');
   assert.equal(C.flagUrl('', p), '');
   assert.equal(C.flagUrl('https://evil.example/?x=PAPERID', p), '');
+});
+
+test('Latest includes seven calendar publication days, excluding future, old, and unknown dates', () => {
+  const papers = [
+    paper('today', { published: '2026-11-16' }),
+    paper('boundary', { published: '2026-11-10' }),
+    paper('old', { published: '2026-11-09', added: '2026-11-16' }),
+    paper('future', { published: '2026-11-17' }),
+    paper('unknown', { published: '', added: '2026-11-16' }),
+  ];
+  assert.deepEqual(C.publishedThisWeek(papers, '2026-11-16').map(p => p.id), ['today', 'boundary']);
+  assert.equal(papers.length, 5, 'the full library is unchanged');
+  assert.deepEqual(C.publishedThisWeek([paper('newyear', { published: '2025-12-27' })], '2026-01-02').map(p => p.id), ['newyear']);
+});
+
+test('linked papers: shared labels grouped by dimension, designs reported as identification', () => {
+  const a = paper('L1'), b = paper('L2', { methods: ['did', 'structural'] });
+  const got = C.sharedByDimension(['t:minimum wage', 'm:did', 'm:structural', 'f:labour', 'a:A1'], ctx, [a, b]);
+  assert.deepEqual(got.map(([d]) => d), ['Author', 'Topic', 'Method', 'Identification', 'Field']);
+  assert.deepEqual(got[1], ['Topic', ['minimum wage']]);
+});
+
+test('paper selector: all picked characteristics must be present, suggestions keep results non-empty', () => {
+  const list = [paper('S1'), paper('S2', { methods: ['iv'] }), paper('S3', { topics: ['labour supply'], methods: ['iv'] })];
+  assert.deepEqual(C.papersWithAll(list, [{ kind: 'method', key: 'iv' }]).map(p => p.id), ['S2', 'S3']);
+  assert.deepEqual(C.papersWithAll(list, [{ kind: 'method', key: 'iv' }, { kind: 'topic', key: 'minimum wage' }]).map(p => p.id), ['S2']);
+  assert.deepEqual(C.papersWithAll(list, [{ kind: 'author', key: 'A1' }, { kind: 'field', key: 'labour' }]).length, 3);
+  assert.deepEqual(C.papersWithAll(list, []), [], 'no picks, no selection');
+  const opts = C.pickOptions(list, ctx, 'wage');
+  assert.deepEqual(opts.map(o => [o.kind, o.key, o.count]), [['topic', 'minimum wage', 2]]);
+  assert.deepEqual(C.pickOptions(list, ctx, 'labour', { picks: [{ kind: 'topic', key: 'labour supply' }] }).map(o => o.key), ['labour'], 'counted among current matches, picked ones left out');
+  assert.equal(C.pickOptions(list, ctx, 'lovelace')[0].label, 'Ada Lovelace');
+});
+
+test('filters: "all of" per picker, topics, and excluded values', () => {
+  const list = [paper('C1', { methods: ['did', 'structural'] }), paper('C2', { methods: ['did'] }), paper('C3', { methods: ['structural'], topics: ['labour supply'] }), paper('C4', { methods: ['did', 'structural'], journal: 'jeh', topics: ['labour supply', 'minimum wage'] })];
+  const base = C.cleanFilters({});
+  assert.deepEqual(C.filterPapers(list, { ...base, methods: ['did', 'structural'] }, ctx).map(p => p.id), ['C1', 'C2', 'C3', 'C4'], 'any of, as before');
+  assert.deepEqual(C.filterPapers(list, { ...base, methods: ['did', 'structural'], all: ['methods'] }, ctx).map(p => p.id), ['C1', 'C4'], 'all of');
+  assert.deepEqual(C.filterPapers(list, { ...base, topics: ['labour supply', 'minimum wage'], all: ['topics'] }, ctx).map(p => p.id), ['C4']);
+  assert.deepEqual(C.filterPapers(list, { ...base, topics: ['labour supply'] }, ctx).map(p => p.id), ['C3', 'C4']);
+  assert.deepEqual(C.filterPapers(list, { ...base, methods: ['did'], not: ['methods:structural'] }, ctx).map(p => p.id), ['C2'], 'did but not structural');
+  assert.deepEqual(C.filterPapers(list, { ...base, not: ['journals:jeh', 'authors:A9'] }, ctx).map(p => p.id), ['C1', 'C2', 'C3']);
+  assert.deepEqual(C.filterPapers(list, { ...base, fields: ['labour', 'econ-history'], all: ['fields'] }, ctx).map(p => p.id), [], 'all of two fields none has');
+  const clean = C.cleanFilters({ all: ['methods', 'journals', 'x'], not: ['methods:rdd', 'bogus', 'authors:n:ada lovelace', 'families:x'], topics: ['minimum wage'] });
+  assert.deepEqual(clean.all, ['methods'], 'only multi-valued pickers can be "all of"');
+  assert.deepEqual(clean.not, ['methods:rdd', 'authors:n:ada lovelace']);
+  assert.equal(C.activeFilterCount(clean), 3);
 });

@@ -22,7 +22,7 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -82,7 +82,9 @@ def end():
 
 
 def week_key(resets):
-    return resets[:13]  # the reset hour identifies the week
+    """The reset hour identifies the week, rounded: the meter reports the same reset as 06:59:59.7 or 07:00:00."""
+    t = datetime.fromisoformat(resets.replace('Z', '+00:00'))
+    return (t + timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%dT%H')
 
 
 def load_ledger():
