@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'radar'
 S = 512
-BG, RING, SWEEP, EDGE = '#111326', '#a9b4ff', '#26338f', '#eceef1'
+BG, RING, SWEEP, EDGE = '#0e0f11', '#3d74ff', '#1f3fff', '#eceef1'
 CENTER = (236, 276)
 NODES = [((236, 276), 30, '#f4f2ec'), ((150, 186), 22, '#3987e5'), ((356, 160), 26, '#eb6834'),
          ((372, 330), 20, '#1baf7a'), ((176, 382), 18, '#e87ba4'), ((300, 236), 14, '#eda100')]
