@@ -1,0 +1,7 @@
+
+# Local Python build caches
+__pycache__/
+*.py[cod]
+
+# EconRadar: open-access conclusions waiting for a Claude session (local only)
+.radar-cache/

@@ -1,0 +1,179 @@
+{
+ "version": 2,
+ "generatedAt": "2026-11-13T15:59:41+00:00",
+ "total": 1702,
+ "shards": [
+  {
+   "year": "2026",
+   "file": "papers-2026.json",
+   "count": 1621
+  },
+  {
+   "year": "2025",
+   "file": "papers-2025.json",
+   "count": 81
+  }
+ ],
+ "runs": [
+  {
+   "at": "2026-11-13T15:59:41+00:00",
+   "since": "2026-09-14",
+   "added": 0,
+   "upgraded": 0,
+   "byModel": 0,
+   "byRules": 0,
+   "failed": 0,
+   "deferred": 0,
+   "provider": "rules",
+   "pdfs": 0,
+   "journals": {},
+   "seconds": 8
+  },
+  {
+   "at": "2026-11-13T12:44:34+00:00",
+   "since": "2020-01-01",
+   "added": 18880,
+   "upgraded": 0,
+   "byModel": 0,
+   "byRules": 18880,
+   "failed": 0,
+   "deferred": 0,
+   "provider": "rules",
+   "pdfs": 0,
+   "journals": {
+    "aer": 695,
+    "restud": 580,
+    "jde": 930,
+    "jpube": 928,
+    "joe": 1071,
+    "aejpol": 359,
+    "jie": 616,
+    "ej": 699,
+    "aejmic": 304,
+    "nber": 8519,
+    "qje": 303,
+    "jeea": 386,
+    "jme": 507,
+    "jpe": 476,
+    "aejmac": 282,
+    "aejapp": 297,
+    "restat": 750,
+    "rand": 199,
+    "jole": 289,
+    "aeri": 202,
+    "ecta": 488
+   },
+   "seconds": 2938
+  },
+  {
+   "at": "2026-11-13T05:58:47+00:00",
+   "since": "2026-09-14",
+   "added": 0,
+   "upgraded": 40,
+   "byModel": 40,
+   "byRules": 20,
+   "failed": 0,
+   "deferred": 0,
+   "provider": "openrouter:nvidia/nemotron-3.5-super-vl:free",
+   "pdfs": 0,
+   "journals": {},
+   "seconds": 2000
+  },
+  {
+   "at": "2026-11-12T16:11:58+00:00",
+   "since": "2026-05-01",
+   "added": 77,
+   "upgraded": 0,
+   "byModel": 0,
+   "byRules": 77,
+   "failed": 0,
+   "deferred": 0,
+   "provider": "rules",
+   "pdfs": 76,
+   "journals": {
+    "nber": 77
+   },
+   "seconds": 89
+  },
+  {
+   "at": "2026-11-12T14:45:15+00:00",
+   "since": "2026-09-13",
+   "added": 2,
+   "upgraded": 7,
+   "byModel": 9,
+   "byRules": 3,
+   "failed": 0,
+   "deferred": 0,
+   "provider": "openrouter:nvidia/nemotron-3.5-super-vl:free",
+   "pdfs": 0,
+   "journals": {
+    "jpe": 1,
+    "jde": 1
+   },
+   "seconds": 657
+  },
+  {
+   "at": "2026-11-12T13:39:41+00:00",
+   "since": "2026-05-01",
+   "added": 809,
+   "upgraded": 0,
+   "byModel": 0,
+   "byRules": 809,
+   "failed": 0,
+   "deferred": 0,
+   "provider": "rules",
+   "pdfs": 782,
+   "journals": {
+    "nber": 805,
+    "nhb": 4
+   },
+   "seconds": 9108
+  },
+  {
+   "at": "2026-11-12T10:17:56+00:00",
+   "since": "2026-05-01",
+   "added": 1313,
+   "upgraded": 0,
+   "byModel": 0,
+   "byRules": 1313,
+   "failed": 0,
+   "provider": "rules",
+   "pdfs": 379,
+   "journals": {
+    "qje": 25,
+    "jpube": 112,
+    "jhr": 35,
+    "nhb": 72,
+    "jf": 37,
+    "jme": 35,
+    "jie": 53,
+    "apsr": 40,
+    "restud": 73,
+    "jeh": 16,
+    "jeea": 41,
+    "ajps": 29,
+    "jeem": 66,
+    "ej": 78,
+    "joe": 68,
+    "jhe": 36,
+    "jde": 116,
+    "eeh": 19,
+    "jue": 31,
+    "aer": 45,
+    "asr": 22,
+    "aejpol": 26,
+    "aejmic": 30,
+    "ehr": 33,
+    "jole": 19,
+    "jpe": 35,
+    "restat": 61,
+    "aejmac": 20,
+    "aejapp": 18,
+    "rand": 14,
+    "aeri": 8
+   },
+   "seconds": 536
+  }
+ ],
+ "waiting": 18939
+}
