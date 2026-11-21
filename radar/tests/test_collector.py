@@ -499,6 +499,26 @@ class Batch(unittest.TestCase):
             self.assertEqual(rb.Target(tmp).pending(), [])
             self.assertIn('HOW TO ANSWER', rb.instructions(TAX, ['wages']))
 
+    def test_queued_rewrites_are_hidden_then_come_first_and_return_when_done(self):
+        import radar_batch as rb
+        with tempfile.TemporaryDirectory() as tmp:
+            private, public = Path(tmp) / 'store', Path(tmp) / 'public'
+            store = cl.Store(private, public=public)
+            store.add({'id': 'W1', 'journal': 'aer', 'title': 'New', 'published': '2026-11-01', 'added': '2026-11-10',
+                       'authors': [{'n': 'A'}], 'abstract': 'Abs one.', 'by': 'rules'})
+            store.add({'id': 'W2', 'journal': 'aer', 'title': 'Copied', 'published': '2021-01-01', 'added': '2026-11-01',
+                       'authors': [{'n': 'B'}], 'abstract': 'Abs two.', 'by': 'claude-sonnet-5-5', 'summary': 'Old.', 'redo': 'copied'})
+            store.save()
+            self.assertEqual(json.loads((public / 'index.json').read_text())['total'], 0, 'a queued rewrite is hidden')
+            target = rb.Target(private, public=public)
+            self.assertEqual([p['id'] for p in target.pending()], ['W2', 'W1'], 'rewrites come first')
+            answer = {'question': 'Q?', 'contribution': 'C.', 'summary': 'Fresh words.', 'conclusion': '', 'fields': ['labour'],
+                      'methods': [], 'identification': '', 'data_types': [], 'data_detail': '', 'topics': [], 'geography': [], 'period': '', 'jel': []}
+            done, _, _ = rb.import_answers(target, TAX, {'W2': answer}, 'claude-sonnet-5-5', {})
+            self.assertEqual(done, ['W2'])
+            shown = json.loads((public / 'papers-2021.json').read_text())['papers']
+            self.assertEqual([(p['id'], p['summary'], 'redo' in p) for p in shown], [('W2', 'Fresh words.', False)])
+
     def test_import_rejects_answers_that_copy_the_abstract(self):
         import radar_batch as rb
         abstract = 'We exploit a reform that raised the minimum wage in half of the states to estimate employment effects for teenagers.'

@@ -614,9 +614,10 @@ def slim(p):
 
 
 def summarised(p):
-    """True when a model wrote the paper's summary. Keyword-rule records reuse sentences of the
-    abstract, so they are never published."""
-    return p.get('by', 'rules') != 'rules'
+    """True when a model wrote the paper's summary and it is not queued for a rewrite. Keyword-rule
+    records reuse sentences of the abstract, so they are never published, and neither is a model
+    summary marked `redo` (one that copied the abstract) until it is rewritten."""
+    return p.get('by', 'rules') != 'rules' and not p.get('redo')
 
 
 def write_years(root, rows, abstracts):

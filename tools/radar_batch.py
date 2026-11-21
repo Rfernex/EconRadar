@@ -55,10 +55,11 @@ class Target:
             self.rows = {p['id']: p for _, p in self.store.papers()}
 
     def pending(self, today=None):
-        """Papers without a model summary: this week's news first (added in the last 7 days and
-        published in the last 60), then the backlog, newest published first."""
-        rows = [p for p in self.rows.values() if p.get('by', 'rules') == 'rules' and (p.get('abstract') or p.get('title'))]
-        return sorted(rows, key=lambda p: (is_news(p, today), p.get('published', ''), p['id']), reverse=True)
+        """Papers to (re)write: summaries queued for a rewrite (`redo`, hidden from the app meanwhile)
+        first, then this week's news (added in the last 7 days and published in the last 60), then
+        the backlog, newest published first within each group."""
+        rows = [p for p in self.rows.values() if (p.get('redo') or p.get('by', 'rules') == 'rules') and (p.get('abstract') or p.get('title'))]
+        return sorted(rows, key=lambda p: (bool(p.get('redo')), is_news(p, today), p.get('published', ''), p['id']), reverse=True)
 
     def venue(self, p, tax):
         if self.area:
@@ -121,6 +122,7 @@ def import_answers(target, tax, answers, by, conclusions, dry_run=False):
             out['topics'] = p['topics']
         p.update(out)
         p['by'], p['at'] = by, today
+        p.pop('redo', None)
         p['text'] = [k for k, v in (('abstract', p.get('abstract')), ('conclusion', conclusions.get(pid))) if v]
         done.append(pid)
     if done:
@@ -150,7 +152,8 @@ def main(argv=None):
     if args.command == 'status':
         pending = target.pending()
         recent = sum(is_news(p) for p in pending)
-        print(json.dumps({'papers': len(target.rows), 'withoutModelSummary': len(pending), 'addedThisWeek': recent,
+        print(json.dumps({'papers': len(target.rows), 'withoutModelSummary': len(pending), 'toRewrite': sum(bool(p.get('redo')) for p in pending),
+                          'addedThisWeek': recent,
                           'conclusionsCached': len(load_conclusions())}))
         return 0
     if args.command == 'instructions':
