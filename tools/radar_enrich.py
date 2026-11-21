@@ -427,7 +427,7 @@ class ClaudeEnricher:
 
 # Free models are many, change often and vary a lot in how reliably they return JSON. Rank
 # the live list: enforced JSON (structured outputs) first, then JSON mode, then the rest;
-# within each, the families the other apps on this site prefer (shared/openrouter.mjs).
+# within each, the model families preferred for dependable JSON.
 OPENROUTER_PREFER = ['gemma-4-31b', 'nemotron-3.5-super', 'nemotron-3-super', 'gemma-4', 'deepseek', 'qwen3', 'llama-4',
                      'gpt-oss', 'ernie', 'glm', 'kimi', 'mistral', 'dots', 'nemotron']
 OPENROUTER_SKIP = re.compile(r'content-safety|guard|lyria|embed|tts|whisper|rerank|\bxs\b|code|inkling|nano|audio|image', re.I)
