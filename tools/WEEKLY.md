@@ -21,7 +21,9 @@ python3 tools/radar_routine.py end
 ```
 
 If `begin` prints BUSY, another run is going: stop, without running `end`. `begin` resets this
-checkout to origin/main; it holds nothing else.
+checkout to origin/main; it holds nothing else. The tools read and write the private store in
+`.radar-cache/store` (abstracts included, never published) and refresh `radar/data`, the app's copy:
+only model-summarised papers, without abstracts. `publish` commits that copy.
 
 ## Weekly update
 
@@ -56,29 +58,7 @@ python3 tools/radar_batch.py import --answers /tmp/econradar-answers.json
 - Stop when `status` shows `addedThisWeek: 0`. The backlog is the catch-up's job.
 - The Focus area (`--area basic-income`) is summarised only on request.
 
-### 3. Newsletter
-
-```
-python3 tools/newsletter.py build
-```
-
-Read the issue it wrote (`radar/data/newsletter/<today>.json`). Write `/tmp/econradar-texts.json`:
-
-```
-{"brief": "3-4 sentences: what stands out this week (papers, methods, a trend), plain and factual.",
- "families": {"labour": "1-2 sentences on this week's papers in that field", ...}}
-```
-
-Only for families with papers this week; only claims the issue's papers support. Then:
-
-```
-python3 tools/newsletter.py texts --texts /tmp/econradar-texts.json
-python3 tools/newsletter.py send      # creates a DRAFT in Buttondown; the owner reviews and sends it
-```
-
-If `send` says BUTTONDOWN_API_KEY is not set, skip it: the issue is still in the app.
-
-### 3b. Readers' flags (report only)
+### 3. Readers' flags (report only)
 
 ```
 python3 tools/radar_flags.py list
@@ -101,7 +81,7 @@ If tests fail, do not publish: run `end` and report the failure.
 ### 5. Report
 
 One short message: papers added (journals / NBER), summaries written and rejected, backlog left
-(`status`), newsletter draft created or skipped, open readers' flags (step 3b), and anything that failed.
+(`status`), open readers' flags (step 3), and anything that failed.
 
 ## Catch-up (the backlog, 250 papers per run)
 

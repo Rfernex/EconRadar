@@ -104,6 +104,26 @@ class Collector(unittest.TestCase):
             self.assertEqual(next(p for _, p in reread.papers() if p['id'] == 'W2')['abstract'], 'We study y.')
             self.assertEqual(reread.remove(lambda p: p['id'] != 'W1'), 1)
 
+    def test_public_copy_has_only_model_summaries_and_no_abstracts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private, public = Path(tmp) / 'store', Path(tmp) / 'public'
+            public.mkdir()
+            (public / 'abstracts-2024.json').write_text('{}')  # left over from before: removed
+            store = cl.Store(private, public=public)
+            store.add({'id': 'W1', 'added': '2026-11-12', 'published': '2026-10-01', 'title': 'A', 'abstract': 'We study x.',
+                       'summary': 'We study x.', 'by': 'rules'})
+            store.add({'id': 'W2', 'added': '2026-11-12', 'published': '2025-10-01', 'title': 'B', 'abstract': 'We study y.',
+                       'summary': 'Y rises.', 'by': 'claude-sonnet-5-5'})
+            store.save({'at': '2026-11-12T05:00:00+00:00', 'added': 2})
+            self.assertEqual(sorted(f.name for f in public.iterdir()), ['index.json', 'papers-2025.json'])
+            index = json.loads((public / 'index.json').read_text())
+            self.assertEqual((index['total'], index['waiting'], index['shards']), (1, 1, [{'year': '2025', 'file': 'papers-2025.json', 'count': 1}]))
+            self.assertEqual(len(index['runs']), 1)
+            text = ''.join(f.read_text() for f in public.iterdir())
+            self.assertNotIn('We study', text, 'no abstract and no rule text copied from one')
+            self.assertEqual(json.loads((private / 'index.json').read_text())['total'], 2, 'the private store keeps everything')
+            self.assertEqual(json.loads((private / 'abstracts-2026.json').read_text()), {'W1': 'We study x.'})
+
     def test_store_rewrites_month_files_by_year(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -516,14 +536,14 @@ class Flags(unittest.TestCase):
             with unittest.mock.patch.object(rf, 'DECISIONS', Path(tmp) / 'decisions.json'):
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
-                    rf.main(['list', '--csv', str(sheet), '--data-dir', tmp])
+                    rf.main(['list', '--csv', str(sheet), '--store-dir', tmp, '--data-dir', tmp + '/public'])
                 self.assertIn('they fell', out.getvalue())
                 self.assertIn('Summary: Wages rose.', out.getvalue())
-                rf.main(['resolve', flags[0]['flag'], '--fixed', '--reason', 'Re-summarised', '--csv', str(sheet), '--data-dir', tmp])
-                rf.main(['resolve', flags[1]['flag'], '--dismissed', '--csv', str(sheet), '--data-dir', tmp])
+                rf.main(['resolve', flags[0]['flag'], '--fixed', '--reason', 'Re-summarised', '--csv', str(sheet), '--store-dir', tmp, '--data-dir', tmp + '/public'])
+                rf.main(['resolve', flags[1]['flag'], '--dismissed', '--csv', str(sheet), '--store-dir', tmp, '--data-dir', tmp + '/public'])
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
-                    rf.main(['list', '--csv', str(sheet), '--data-dir', tmp])
+                    rf.main(['list', '--csv', str(sheet), '--store-dir', tmp, '--data-dir', tmp + '/public'])
                 self.assertTrue(out.getvalue().startswith('0 open flags (2 in all)'))
             again = {p['id']: p for _, p in cl.Store(Path(tmp)).papers()}
             self.assertTrue(again['W1']['corrected'])
@@ -562,80 +582,3 @@ class Routine(unittest.TestCase):
             (wt / '.git').write_text(f"gitdir: {main / '.git' / 'worktrees' / 'routine'}\n")
             self.assertEqual(cl.main_checkout(wt), main)
             self.assertEqual(cl.main_checkout(main), main)
-
-
-class Newsletter(unittest.TestCase):
-    def test_issue_pages_and_personalised_email(self):
-        import newsletter as nl
-        from datetime import date
-        with tempfile.TemporaryDirectory() as tmp:
-            store = cl.Store(Path(tmp))
-            base = {'authors': [{'n': 'Ada Lovelace', 'id': 'A1'}], 'abstract': 'x', 'by': 'claude-sonnet-5-5'}
-            store.add({**base, 'id': 'OLD', 'journal': 'aer', 'title': 'Minimum wages before', 'published': '2023-05-01', 'added': '2026-11-01',
-                       'fields': ['labour'], 'methods': ['did'], 'topics': ['minimum wage']})
-            store.add({**base, 'id': 'NEW', 'journal': 'qje', 'title': 'Minimum wages now', 'published': '2026-11-02', 'added': '2026-11-10',
-                       'fields': ['labour'], 'methods': ['did', 'rct'], 'topics': ['minimum wage'], 'contribution': 'Shows X.', 'ident': 'Borders.',
-                       'data': ['admin', 'survey']})
-            store.add({**base, 'id': 'NB', 'journal': 'nber', 'title': 'A tax paper', 'published': '2026-11-09', 'added': '2026-11-11',
-                       'fields': ['public'], 'methods': ['structural'], 'topics': ['wealth tax'], 'data': ['admin']})
-            store.add({**base, 'id': 'BACK', 'journal': 'aer', 'title': 'Backfilled', 'published': '2021-01-01', 'added': '2026-11-11', 'fields': ['labour']})
-            store.save()
-            corpus = nl.Corpus(tmp, CONFIG)
-            issue = nl.build(corpus, date(2026, 11, 12))
-            self.assertEqual(issue['counts']['total'], 2, 'old papers added by a backfill are not news')
-            self.assertEqual([h['id'] for h in issue['highlights']], ['NEW', 'NB'], 'journals before NBER')
-            labour = issue['families']['labour']
-            self.assertEqual(labour['papers'][0]['related'][0]['id'], 'OLD')
-            self.assertIn('minimum wage', labour['papers'][0]['related'][0]['why'])
-            self.assertEqual(labour['authors'][0], {'name': 'Ada Lovelace', 'papers': 1, 'before': 2, 'topics': ['minimum wage'], 'last': {
-                'id': 'OLD', 'title': 'Minimum wages before', 'published': '2023-05-01', 'journal': 'AER'}}, 'usual topics and latest earlier paper')
-            self.assertEqual(issue['identCats'][0]['key'], 'rct')
-            rows = {r['key']: (r['papers'], r['parts']) for r in issue['dataByIdent']['rows']}
-            self.assertEqual(rows, {'admin': (2, [{'cat': 'rct', 'count': 1}]), 'survey': (1, [{'cat': 'rct', 'count': 1}])},
-                             'a paper with an RCT and a DiD counts once, as an experiment; the structural paper has no design')
-            self.assertEqual((issue['dataByIdent']['all']['papers'], issue['dataByIdent']['noData']), (2, 0))
-            self.assertEqual(labour['dataByIdent']['rows'][0]['parts'], [{'cat': 'rct', 'count': 1}])
-            self.assertEqual([m['key'] for m in issue['methods']], ['structural'])
-            self.assertEqual(issue['families']['public']['methods'], [{'label': 'Structural estimation', 'count': 1}])
-            self.assertEqual(issue['families']['public']['authors'][0]['topics'], ['minimum wage'], 'earlier topics come first')
-            body = nl.render(issue)
-            self.assertIn('https://rfernex.github.io/Apps/radar/#newsletter/2026-11-12/labour', body, 'page 2 links to the full field section')
-            self.assertNotIn('subscriber.tags', body, 'one email for all: tags are a paid Buttondown add-on')
-            self.assertIn('## Page 2', body)
-            self.assertNotIn('Usual topics', body, 'the author tables stay in the app')
-            self.assertIn('No identification design', body, 'the stacked bars and their legend')
-            self.assertEqual(body.count('<colgroup>'), 1, 'the chart on page 1; the field charts are in the app')
-            self.assertIn('width:100%;border-radius', body, 'the most used method fills the bar scale')
-            self.assertNotIn('#newsletter/2026-11-12/history', body, 'empty fields are left out')
-            os_env = dict(__import__('os').environ); os_env.pop('BUTTONDOWN_API_KEY', None)
-            with unittest.mock.patch.dict('os.environ', os_env, clear=True), self.assertRaises(SystemExit):
-                nl.send(issue)
-
-    def test_authors_versions_names_and_trends(self):
-        import newsletter as nl
-        from datetime import date
-        self.assertEqual(cl.person_name('Jonathan Gruber A B'), 'Jonathan Gruber')
-        self.assertEqual(cl.person_name('Pengfei Wang'), 'Pengfei Wang')
-        self.assertEqual(nl.name_key('Amy N. Finkelstein'), nl.name_key('Amy Finkelstein'))
-        self.assertEqual(nl.pct(0.004), '0.4%')
-        self.assertEqual(nl.pct(0.25), '25%')
-        with tempfile.TemporaryDirectory() as tmp:
-            store = cl.Store(Path(tmp))
-            amy = lambda pid: [{'n': 'Amy N. Finkelstein' if pid == 'WP' else 'Amy Finkelstein', 'id': 'A-' + pid}]
-            common = {'abstract': 'x', 'fields': ['public'], 'topics': ['health insurance'], 'methods': ['rct']}
-            store.add({**common, 'id': 'WP', 'journal': 'nber', 'title': 'Insurance and Health: Evidence', 'published': '2025-03-01',
-                       'added': '2026-01-01', 'authors': amy('WP'), 'by': 'rules'})
-            store.add({**common, 'id': 'OLD', 'journal': 'aer', 'title': 'An earlier insurance paper', 'published': '2024-03-01',
-                       'added': '2026-01-01', 'authors': [{'n': 'Someone Else', 'id': 'A9'}], 'by': 'rules'})
-            store.add({**common, 'id': 'PUB', 'journal': 'qje', 'title': 'Insurance and health - evidence', 'published': '2026-11-02',
-                       'added': '2026-11-10', 'authors': amy('PUB') + [{'n': 'Liran Einav B', 'id': 'A7'}], 'by': 'claude-sonnet-5-5'})
-            store.save()
-            reloaded = cl.Store(Path(tmp))
-            self.assertEqual(reloaded.rows['PUB']['authors'][1]['n'], 'Liran Einav', 'stored names are cleaned on load')
-            issue = nl.build(nl.Corpus(tmp, CONFIG), date(2026, 11, 12))
-            public = issue['families']['public']
-            self.assertEqual(public['authors'][0]['before'], 1, 'the same person under another id and spelling')
-            self.assertEqual(public['authors'][1]['topics'], ['health insurance'], 'an author new to the radar: this week\'s topics')
-            self.assertEqual([r['id'] for r in public['papers'][0]['related']], ['OLD'], 'its own working paper is not "related"')
-            self.assertEqual(issue['trends'], {'methods': [], 'topics': [], 'data': []}, 'no trends while older papers have rule tags only')
-            self.assertEqual(issue['trendsCoverage'], 0.0)

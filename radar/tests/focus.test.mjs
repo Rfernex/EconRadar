@@ -27,8 +27,8 @@ test('prepare keeps known strands, adds reverse citations and matching radar pap
   assert.deepEqual([r.radar, r.kind, r.venue, r.strands[0], r.cited], [true, 'working', 'NBER Working Papers', 'ubi', null]);
   assert.ok(r.outcomes.includes('labour'));
   assert.equal(F.byId.get('W1').url, 'https://doi.org/10.1/W1', 'DOI links are rebuilt');
-  assert.equal(FC.attachAbstracts(F, { W2: 'Basic income and fertility in Finland.' }), 1);
-  assert.ok(F.byId.get('W2').text.includes('finland'));
+  const S = FC.prepareFocus({ papers: [paper('W5', { summary: 'Basic income and fertility in Finland.' })] }, spec);
+  assert.ok(S.byId.get('W5').text.includes('finland'), 'summaries are searched');
 });
 
 test('filters combine facets with AND and values with OR; sorting', () => {

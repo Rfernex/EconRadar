@@ -197,33 +197,6 @@ dialog::backdrop{background:#05060899}.dialog-close{display:flex;justify-content
 .match-feature{display:inline-flex;flex-direction:column;gap:2px;padding:6px 10px;border-radius:0;background:var(--accent-soft);color:var(--ink);font-size:12px;max-width:100%;overflow-wrap:anywhere}
 .match-feature small{color:var(--text-secondary);font-size:10px}
 .tie-list li button:has(.shared){white-space:normal;overflow:visible}
-/* Newsletter */
-.nl-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}.nl-layout>div{display:grid;gap:18px}
-.nl-page h3{margin:20px 0 8px}.nl-page .chips{margin:8px 0}
-.nl-paper{padding:12px 0;border-top:1px solid var(--line-soft);display:grid;gap:4px}.nl-paper>button.link{all:unset;cursor:pointer;font-weight:600;color:var(--ink)}.nl-paper>button.link:hover{text-decoration:underline}
-.nl-paper small{color:var(--text-secondary)}.nl-rel button.link{all:unset;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
-.nl-brief{font-family:var(--sans);font-size:15px;line-height:1.55}.nl-list{margin:0;padding-left:18px;display:grid;gap:6px}
-.nl-fam{margin-top:12px;scroll-margin-top:72px}.nl-fam.nl-target>h3{background:var(--accent-soft);border-radius:0;padding:4px 8px;margin-left:-8px}.nl-fam h3 .dot{margin-right:6px}
-.nl-bars{display:grid;gap:4px;margin:10px 0}.nl-bar{display:grid;grid-template-columns:minmax(0,38%) 1fr auto;gap:10px;align-items:center;font-size:13px}
-.nl-bar i{display:block;height:10px}.nl-bar i b{display:block;height:100%;background:var(--muted);border-radius:0 4px 4px 0}.nl-bar .num{color:var(--text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}
-.nl-ident{display:grid;gap:5px;margin-top:10px}.nl-irow{display:grid;grid-template-columns:minmax(0,30%) 1fr 44px;gap:8px;align-items:center}
-.nl-irow .lbl{font-size:12px;text-align:right;color:var(--text-secondary);line-height:1.2}.nl-irow .num{font-size:12px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary)}
-.nl-irow.all{border-top:1px solid var(--line);padding-top:6px;margin-top:2px}.nl-irow.all .lbl{font-weight:600;color:var(--ink)}
-.nl-ibar{display:flex;gap:2px;height:16px;border-radius:0;overflow:hidden}.nl-ibar i{display:block;flex:none;min-width:2px}.nl-ibar i.none{background:var(--line);min-width:0}
-.nl-irow.axis .ticks{position:relative;height:14px;font-size:11px;color:var(--muted)}.nl-irow.axis .ticks span{position:absolute;transform:translateX(-50%)}
-.nl-irow.axis .ticks span:first-child{transform:none}.nl-irow.axis .ticks span:last-child{transform:translateX(-100%)}
-.nl-ilegend{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:4px 6px;margin:12px 0 6px;align-items:start}
-.nl-ilegend .grp{display:grid;gap:2px;min-width:0}.nl-ilegend .grp>span{border-bottom:1px solid var(--line);padding:0 0 2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nl-ilegend .box{display:block;font-size:11px;line-height:1.3;padding:2px 6px;border-radius:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nl-ilegend .box.none{background:var(--line);color:var(--ink)}
-.nl-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 0}.nl-legend .sq{display:inline-block;width:9px;height:9px;border-radius:0;margin-right:5px}
-.nl-authors{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}.nl-authors caption{text-align:left;margin-bottom:4px}
-.nl-authors th{text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--line);padding:4px 8px 4px 0}
-.nl-authors td{border-bottom:1px solid var(--line-soft);padding:6px 8px 6px 0;vertical-align:top}.nl-authors .num{text-align:right;font-variant-numeric:tabular-nums}
-.nl-authors button.link{all:unset;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
-.subscribe{position:sticky;top:16px}.sub-form{display:grid;gap:10px;margin-top:10px}.sub-form input[type=email]{width:100%}
-.sub-form fieldset{border:0;margin:0;padding:0}.sub-fams{display:grid;gap:2px;margin-top:4px}
-@media (max-width:1100px){.nl-layout{grid-template-columns:minmax(0,1fr)}.subscribe{position:static}}
 .table-wrap{overflow-x:auto}
 
 /* A persistent three-card stage: position, surface tilt, and raised content have separate depths. */
@@ -342,7 +315,7 @@ dialog.guide{width:min(720px,calc(100vw - 24px));padding:22px 26px 18px}
 /* ---- Redesign (Nov 2026): square shapes, IBM Plex, hairlines, one blue accent ---- */
 /* Labels: mono, sentence case, accent colour (replaces the small-caps eyebrow) */
 .eyebrow{font:500 11px/1.4 var(--mono);text-transform:none;letter-spacing:.02em;color:var(--accent-hi)}
-#crumb{font:500 11px var(--mono);letter-spacing:.06em}#top-count,.tie-list .w,td.num,.nl-bar .num{font-family:var(--mono);font-size:11.5px}
+#crumb{font:500 11px var(--mono);letter-spacing:.06em}#top-count,.tie-list .w,td.num{font-family:var(--mono);font-size:11.5px}
 .p-meta{font-family:var(--mono);font-size:11px}.p-meta .journal{font-family:var(--sans);font-size:11.5px}
 .day-head span,.spotlight-index,.spotlight-bottom>span,.spotlight-controls>span{font-family:var(--mono)}
 /* Navigation: the active page is marked by a bar, not a filled pill */

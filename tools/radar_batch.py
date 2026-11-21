@@ -15,6 +15,8 @@ methods, identification, data_types, data_detail, topics, geography, period, jel
 (unknown keys dropped, an answer without a summary or a field rejected) and stores it.
 
 --area basic-income works on a Focus area (radar/focus.json) instead of the radar.
+Papers are read from the private store (.radar-cache/store) and each import also refreshes
+the app's copy in radar/data, which holds only model-summarised papers and no abstracts.
 Papers are taken newest first: this week's additions, then the backlog by publication date.
 """
 import argparse
@@ -41,20 +43,20 @@ def is_news(p, today=None):
 class Target:
     """The radar's store or a Focus area's store, behind one interface."""
 
-    def __init__(self, data_dir, area=None):
+    def __init__(self, store_dir, area=None, public=None):
         self.area = area
         if area:
             import collect_focus as cf
-            self.store = cf.AreaStore(Path(data_dir), area)
+            self.store = cf.AreaStore(Path(store_dir), area, public=public and Path(public))
             self.spec = next(a for a in json.loads(cf.FOCUS.read_text())['areas'] if a['key'] == area)
             self.rows = self.store.papers
         else:
-            self.store = cl.Store(Path(data_dir))
+            self.store = cl.Store(Path(store_dir), public=public and Path(public))
             self.rows = {p['id']: p for _, p in self.store.papers()}
 
     def pending(self, today=None):
         """Papers without a model summary: this week's news first (added in the last 7 days and
-        published in the last 60, as in the newsletter), then the backlog, newest published first."""
+        published in the last 60), then the backlog, newest published first."""
         rows = [p for p in self.rows.values() if p.get('by', 'rules') == 'rules' and (p.get('abstract') or p.get('title'))]
         return sorted(rows, key=lambda p: (is_news(p, today), p.get('published', ''), p['id']), reverse=True)
 
@@ -136,10 +138,11 @@ def main(argv=None):
     ap.add_argument('--ids', help='export: a file of paper ids (one per line) to export instead of the next pending papers')
     ap.add_argument('--dry-run', action='store_true', help='import: validate only and write the validated answers to --out')
     ap.add_argument('--rules-vocab', action='store_true', help='instructions: build the topic list only from papers no model has summarised')
+    ap.add_argument('--store-dir', default=str(cl.STORE), help=argparse.SUPPRESS)
     ap.add_argument('--data-dir', default=str(cl.DATA), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     tax = enrich.Taxonomy(json.loads(cl.CONFIG.read_text()))
-    target = Target(args.data_dir, args.area)
+    target = Target(args.store_dir, args.area, args.data_dir)
     if args.command == 'status':
         pending = target.pending()
         recent = sum(is_news(p) for p in pending)
@@ -147,7 +150,7 @@ def main(argv=None):
                           'conclusionsCached': len(load_conclusions())}))
         return 0
     if args.command == 'instructions':
-        store = cl.Store(Path(args.data_dir))
+        store = cl.Store(Path(args.store_dir))
         if args.rules_vocab:
             store.rows = {k: p for k, p in store.rows.items() if p.get('by', 'rules') == 'rules'}
         vocab = store.top_topics() if not args.area else []

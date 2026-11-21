@@ -24,10 +24,9 @@ const ICONS = {
   authors: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.4 3-5.2 5.5-5.2s4.7 1.8 5.5 5.2"/><circle cx="17" cy="9" r="2.4"/><path d="M15.6 13.9c2.4-.3 4.2 1.2 4.9 4.1"/>',
   trends: '<path d="M4 19V5M4 19h16"/><path d="M7 15l4-4 3 3 5-6"/>',
   sources: '<path d="M5 5.5C5 4.7 5.7 4 6.5 4H18v14H6.5C5.7 18 5 18.7 5 19.5zM5 19.5c0 .8.7 1.5 1.5 1.5H18"/><path d="M9 8h6M9 11h4"/>',
-  newsletter: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>',
   focus: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
 };
-const BASE_VIEWS = [['latest', 'Latest'], ['papers', 'Paper list'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['newsletter', 'Newsletter'], ['sources', 'Sources']];
+const BASE_VIEWS = [['latest', 'Latest'], ['papers', 'Paper list'], ['network', 'Network'], ['authors', 'Authors'], ['trends', 'Trends'], ['sources', 'Sources']];
 // The Focus tab (radar/focus.json) is personal: it shows only on devices where it was switched
 // on, by opening the app once at #focus. Nothing else in the app links to it.
 const FOCUS_KEY = 'radar.focus.v1';
@@ -170,8 +169,8 @@ function bindZotero() {
 async function getJSON(url) { const r = await fetch(url, { cache: 'no-cache' }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); }
 
 // Papers come one file per publication year (data/papers-YYYY.json): the newest year is
-// loaded first so the app opens fast, the older years follow in the background, and each
-// year's abstracts (data/abstracts-YYYY.json) only when a paper of that year is opened.
+// loaded first so the app opens fast, and the older years follow in the background. Only
+// papers a model has summarised are published, and abstracts never are.
 async function load() {
   S.config = await getJSON('config.json');
   S.ctx = C.createContext(S.config);
@@ -204,15 +203,6 @@ function absorb() {
   const topics = new Map();
   for (const p of S.papers) for (const t of p.topics) topics.set(t, (topics.get(t) || 0) + 1);
   S.allTopics = topics;
-}
-const abstractsLoaded = new Map();
-function loadAbstracts(year) {
-  const shard = (S.index.shards || []).find(s => s.year === year && s.abstracts);
-  if (!shard) return Promise.resolve();
-  if (!abstractsLoaded.has(year)) abstractsLoaded.set(year, getJSON('data/' + shard.abstracts).then(map => {
-    for (const p of S.papers) if (map[p.id] && !p.abstract) C.setAbstract(p, map[p.id]);
-  }).catch(() => abstractsLoaded.delete(year)));
-  return abstractsLoaded.get(year);
 }
 
 function topCount() {
@@ -255,7 +245,6 @@ function renderFilters() {
     <button type="button" class="btn ghost small" data-toggle="saved" aria-pressed="false">★ Saved</button>
     <button type="button" class="btn ghost small" data-toggle="unread" aria-pressed="false">Unread</button>
     <button type="button" class="btn ghost small" data-toggle="followed" aria-pressed="false">Followed authors</button>
-    <button type="button" class="btn ghost small" data-toggle="modelOnly" aria-pressed="false" title="Only papers summarised by the model">AI-summarised</button>
     <button type="button" class="text-btn" id="f-clear">Clear all</button>
   </div><div class="active-filters" id="active-filters"></div>`;
   renderAuthorOptions('');
@@ -406,13 +395,13 @@ function route() {
   S.view = views().some(([k]) => k === view) || view === 'author' ? view : 'latest';
   S.limit = 30;
   S.arg = decodeURIComponent(rest.join('/'));
-  // #paper/<id> (links in the newsletter): the latest papers, with that paper open.
+  // #paper/<id> (a shared link): the latest papers, with that paper open.
   if (view === 'paper' && S.arg) { const id = S.arg; S.arg = ''; setTimeout(() => openPaperWhenLoaded(id), 0); }
   if (S.view !== 'network' && S.network) { S.network.destroy(); S.network = null; stopPlay(); }
   if (S.view !== 'focus') { focusModule?.leave(); topCount(); }
   for (const a of $$('.nav-link')) a.classList.toggle('active', a.dataset.view === (S.view === 'author' ? 'authors' : S.view));
-  $('#crumb').textContent = { latest: 'LATEST PAPERS', papers: 'PAPER LIBRARY', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', newsletter: 'WEEKLY NEWSLETTER', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
-  $('#filter-bar').hidden = $('#filter-toggle').hidden = ['sources', 'focus', 'newsletter'].includes(S.view);
+  $('#crumb').textContent = { latest: 'LATEST PAPERS', papers: 'PAPER LIBRARY', network: 'RESEARCH NETWORK', authors: 'AUTHORS', author: 'AUTHORS / PROFILE', trends: 'TRENDS', focus: 'FOCUS', sources: 'SOURCES & SETTINGS' }[S.view];
+  $('#filter-bar').hidden = $('#filter-toggle').hidden = ['sources', 'focus'].includes(S.view);
   // The network can take a second or two to draw: show the tab at once, then draw it.
   if (S.view === 'network' && !S.network && S.papers.length) {
     $('#main').innerHTML = '<div class="heading"><div><h1>Research network</h1><p class="loading">Drawing the network…</p></div></div>';
@@ -425,7 +414,6 @@ function render(keepNetwork = false) {
   hideTip();
   const main = $('#main');
   if (S.view === 'focus') return renderFocus();
-  if (S.view === 'newsletter') return renderNewsletter();
   if (!S.papers.length && S.view !== 'sources') { main.innerHTML = emptyRadar(); return; }
   if (S.view === 'latest') { main.innerHTML = latestHtml(); mountSweeps(main); }
   else if (S.view === 'papers') main.innerHTML = latestHtml(true);
@@ -440,108 +428,8 @@ async function openPaperWhenLoaded(id) {
   if (S.byId?.has(id)) openPaper(id); else toast('That paper is not in the radar.');
 }
 
-// ---- Newsletter ------------------------------------------------------------------------
-// Issues are built each week by tools/newsletter.py (data/newsletter/<date>.json). Page 2
-// shows the field families a reader picks here (remembered on this device); subscribing
-// sends the same choice to Buttondown as tags, so the email carries those sections.
-const NL = { list: null, issues: new Map() };
-async function renderNewsletter() {
-  const main = $('#main');
-  try {
-    NL.list ||= (await getJSON('data/newsletter/index.json')).issues || [];
-    // #newsletter/<date>/<field> (the email's page 2 links): that issue, scrolled to that field's section.
-    const [d, fam] = (S.arg || '').split('/');
-    const day = NL.list.includes(d) ? d : NL.list[0];
-    if (day && !NL.issues.has(day)) NL.issues.set(day, await getJSON(`data/newsletter/${day}.json`));
-    if (S.view !== 'newsletter') return;
-    main.innerHTML = newsletterHtml(day ? NL.issues.get(day) : null, fam);
-    const target = fam && document.getElementById(`nl-fam-${fam}`);
-    if (target) { target.scrollIntoView({ block: 'start' }); target.classList.add('nl-target'); }
-  } catch { NL.list = []; main.innerHTML = newsletterHtml(null); }
-}
-function subscribeHtml() {
-  const user = S.config.newsletter?.buttondown;
-  return `<div class="panel subscribe"><span class="eyebrow">Subscribe</span><h3>Two pages every week, after the update</h3>
-    <p class="small muted">Page 1: what the week added, highlights, a chart of the data and identification strategies in use, three-month trends. Page 2: the week's top paper in each field, with a link to its full section here (chart, key papers, authors). Pick your fields on this page to keep only those.</p>
-    ${user ? `<form action="https://buttondown.com/api/emails/embed-subscribe/${esc(user)}" method="post" target="_blank" class="sub-form">
-      <input type="email" name="email" required placeholder="you@university.edu" aria-label="Email address" autocomplete="email">
-      <button type="submit" class="btn">Subscribe</button><p class="small muted">You will get a confirmation email. Unsubscribe from any issue.</p></form>`
-    : '<p class="small muted"><b>Subscriptions open soon.</b> Meanwhile, every issue is here.</p>'}</div>`;
-}
-const nlFamilies = () => (Array.isArray(S.prefs.nlFamilies) ? S.prefs.nlFamilies.filter(k => S.ctx.families.has(k)) : []);
-function nlPaper(r, related = false) {
-  const inRadar = S.byId?.has(r.id);
-  return `<div class="nl-paper"><button type="button" class="link" ${inRadar ? `data-open="${esc(r.id)}"` : ''}>${esc(r.title)}</button>
-    <small>${esc(r.journalName || r.journal)} · ${esc(r.authors.join(', '))}${r.moreAuthors ? ` +${r.moreAuthors}` : ''}${r.published ? ' · ' + dayLabel(r.published) : ''}</small>
-    ${r.contribution ? `<p class="p-line${r.byModel ? '' : ' auto'}"><b>Contribution</b>${esc(r.contribution)}</p>` : r.q ? `<p class="p-line auto"><b>Question</b>${esc(r.q)}</p>` : ''}
-    ${r.ident ? `<p class="p-line${r.byModel ? '' : ' auto'}"><b>Identification</b>${esc(r.ident)}</p>` : ''}
-    ${related && r.related?.length ? `<p class="small muted nl-rel"><b>Relates to</b> ${r.related.map(x => `<button type="button" class="link" ${S.byId?.has(x.id) ? `data-open="${esc(x.id)}"` : ''}>${esc(x.title)}</button> (${esc(x.journal)} ${esc(x.year)}${x.why.length ? ', shares ' + esc(x.why.join(', ')) : ''})`).join('; ')}</p>` : ''}</div>`;
-}
-function nlIdent(chart, cats = [], legend = true) {
-  // Rows of data types: each a 0-100% bar of its papers by identification design (grey = no design), All papers below.
-  if (!chart?.rows?.length) return '';
-  const info = Object.fromEntries(cats.map(c => [c.key, c]));
-  const row = (r, all = false) => {
-    const none = r.papers - r.parts.reduce((n, x) => n + x.count, 0);
-    return `<div class="nl-irow${all ? ' all' : ''}"><span class="lbl">${esc(r.label)}</span>
-      <div class="nl-ibar" role="img" aria-label="${esc(`${r.label}: ${r.papers} papers; ${r.parts.map(x => `${info[x.cat]?.label} ${x.count}`).join(', ')}; no design ${none}`)}">${r.parts.map(x => `<i style="width:${(100 * x.count) / r.papers}%;background:${info[x.cat]?.color}" data-tip="${esc(`<b>${r.label} · ${info[x.cat]?.label}</b><span>${x.count} of ${r.papers} papers (${pct(x.count / r.papers)})</span>`)}"></i>`).join('')}${none > 0 ? `<i class="none" style="flex:1" data-tip="${esc(`<b>${r.label} · no identification design</b><span>${none} of ${r.papers} papers (${pct(none / r.papers)})</span>`)}"></i>` : ''}</div>
-      <span class="num">${fmt(r.papers)}</span></div>`;
-  };
-  const groups = [];
-  cats.forEach(c => { if (!groups.length || groups.at(-1)[0] !== c.group) groups.push([c.group, []]); groups.at(-1)[1].push(c); });
-  return `<div class="nl-ident"><div class="nl-irow head"><span></span><span class="small muted">Share of the papers using that data, by identification design</span><span class="small muted num">Papers</span></div>
-    ${chart.rows.map(r => row(r)).join('')}${row(chart.all, true)}
-    <div class="nl-irow axis"><span></span><div class="ticks">${[0, 25, 50, 75, 100].map(t => `<span style="left:${t}%">${t}%</span>`).join('')}</div><span></span></div></div>
-    ${legend ? `<div class="nl-ilegend">${[...groups, ['None', [{ label: 'No identification design', short: 'No design', none: true }]]].map(([g, cs]) => `<div class="grp"><span class="small muted">${esc(g)}</span>${cs.map(c => `<span class="box${c.none ? ' none' : ''}" ${c.none ? '' : `style="background:${c.color};color:${c.ink}"`} title="${esc(c.label)}">${esc(c.short || c.label)}</span>`).join('')}</div>`).join('')}</div>` : ''}
-    ${legend && chart.noData ? `<p class="small muted">A paper using several kinds of data appears in each row. ${fmt(chart.noData)} paper${chart.noData === 1 ? ' uses' : 's use'} no data (theory) and appear${chart.noData === 1 ? 's' : ''} only under All papers.</p>` : ''}`;
-}
-function nlBars(rows, total) {
-  // Other approaches: the share of the week's papers using each, on the scale of the largest share.
-  if (!rows?.length) return '';
-  const share = r => r.share ?? (total ? r.count / total : 0), top = Math.max(...rows.map(share)) || 1;
-  return `<div class="nl-bars" role="list" aria-label="Other approaches"><b class="small">Other approaches: share of papers using each</b>${rows.map(r => `<div class="nl-bar" role="listitem"><span>${esc(r.label)}</span><i><b style="width:${Math.max(1, Math.round(100 * share(r) / top))}%"></b></i><span class="num">${pct(share(r))} · ${r.count}</span></div>`).join('')}</div>`;
-}
-function nlAuthors(authors) {
-  if (!authors.length) return '';
-  return `<div class="table-wrap"><table class="nl-authors"><caption class="small"><b>Authors this week</b>, ranked</caption>
-    <thead><tr><th>#</th><th>Author</th><th class="num">This week</th><th>Usual topics</th><th>Latest paper already in the radar</th></tr></thead>
-    <tbody>${authors.map((a, i) => `<tr><td>${i + 1}</td><td>${esc(a.name)}</td><td class="num">${a.papers ?? 1}</td><td>${esc((a.topics || []).join(', ')) || '<span class="muted">–</span>'}</td>
-      <td>${a.last ? `<button type="button" class="link" ${S.byId?.has(a.last.id) ? `data-open="${esc(a.last.id)}"` : ''}>${esc(a.last.title)}</button> <span class="muted">${esc(a.last.journal)} · ${dayLabel(a.last.published)}</span>` : '<span class="muted">New to the radar</span>'}</td></tr>`).join('')}</tbody></table></div>`;
-}
-function newsletterHtml(issue, focus = '') {
-  const pick = nlFamilies();
-  const head = `<div class="heading"><div><span class="eyebrow">Weekly newsletter</span><h1>${issue ? 'Week of ' + dayLabel(issue.date, { day: 'numeric', month: 'long', year: 'numeric' }) : 'The weekly issue'}</h1>
-    <p>Each week, after the update, a two-page recap of what EconRadar added. Read it here or get it by email.</p></div>
-    ${NL.list?.length > 1 ? `<select id="nl-issue" aria-label="Issue">${NL.list.map(d => `<option value="${d}" ${issue?.date === d ? 'selected' : ''}>${dayLabel(d)}</option>`).join('')}</select>` : ''}</div>`;
-  if (!issue) return `${head}<div class="grid-2"><div class="empty"><h2>No issue yet</h2><p>The first issue comes out after the next weekly update.</p></div>${subscribeHtml()}</div>`;
-  const c = issue.counts, tr = issue.trends;
-  const trendRows = (name, rows) => rows?.length ? `<li><b>${name}</b> ${rows.slice(0, 4).map(r => `${esc(r.label)} <span class="muted">${pct(r.before)} → ${pct(r.recent)}</span>`).join(' · ')}</li>` : '';
-  const fams = Object.entries(issue.families).filter(([, f]) => f.count);
-  const shown = fams.filter(([k]) => !pick.length || pick.includes(k) || k === focus);
-  return `${head}
-    <div class="nl-layout"><div>
-    <section class="panel nl-page"><span class="eyebrow">Page 1 · The week in economics research</span>
-      <p><b>${fmt(c.total)} new papers</b>: ${fmt(c.journals)} in the journals and ${fmt(c.nber)} NBER working papers. The radar now holds ${fmt(c.corpus)} papers published since 2020.</p>
-      ${issue.brief ? `<p class="nl-brief">${esc(issue.brief)}</p>` : ''}
-      <h3>Highlights</h3>${issue.highlights.map(r => nlPaper(r)).join('')}
-      ${issue.dataByIdent || issue.methods.length ? `<h3>Data and identification this week</h3>
-        ${nlIdent(issue.dataByIdent, issue.identCats)}${nlBars(issue.methods, c.total)}` : ''}
-      ${tr.methods.length || tr.topics.length || tr.data.length ? `<h3>Rising over the past three months</h3><p class="small muted">Share of papers published in the last 90 days, against the twelve months before.</p><ul class="nl-list">${trendRows('Methods', tr.methods)}${trendRows('Topics', tr.topics)}${trendRows('Data', tr.data)}</ul>` : ''}
-    </section>
-    <section class="panel nl-page"><span class="eyebrow">Page 2 · Your fields</span>
-      <div class="chips" role="group" aria-label="Fields shown on page 2">${fams.map(([k, f]) => `<button type="button" class="chip btnish" data-nl-fam="${k}" aria-pressed="${pick.includes(k)}"><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">${f.count}</span></button>`).join('')}</div>
-      <p class="small muted">${pick.length ? 'Showing the fields you picked (remembered on this device).' : 'Showing every field. Pick yours to keep page 2 to them.'}</p>
-      ${shown.map(([k, f]) => `<div class="nl-fam" id="nl-fam-${k}"><h3><i class="dot" style="background:${famVar(k)}"></i>${esc(f.label)} <span class="muted">· ${f.count} new</span></h3>
-        ${f.note ? `<p class="nl-brief">${esc(f.note)}</p>` : ''}${nlIdent(f.dataByIdent, issue.identCats, false)}
-        ${f.methods.length ? `<p class="small"><b>Other approaches</b> ${f.methods.map(m => typeof m === 'string' ? esc(m) : `${esc(m.label)} <span class="muted">(${m.count})</span>`).join(', ')}</p>` : ''}
-        ${f.papers.map(r => nlPaper(r, true)).join('')}
-        ${nlAuthors(f.authors)}</div>`).join('')}
-    </section></div>
-    <aside>${subscribeHtml()}<p class="small muted" style="margin-top:12px">Summaries are written by a language model from abstracts and open-access conclusions; check the paper before citing it.</p></aside></div>`;
-}
-
 async function renderFocus() {
-  try { focusModule ||= await import('./focus.mjs?v=5'); }
+  try { focusModule ||= await import('./focus.mjs?v=6'); }
   catch (e) { $('#main').innerHTML = `<div class="empty"><h2>The Focus tab could not load</h2><p>${esc(e.message)}</p></div>`; return; }
   if (S.view !== 'focus') return;
   focusModule.show($('#main'), { S, C, $, $$, esc, fmt, pct, plural, dayLabel, toast, download, showTip, hideTip, getJSON, local, renderNav, createNetwork, zoteroButton, zoteroPaperRef });
@@ -576,8 +464,8 @@ function keyLines(p) {
     + (ident ? `<p class="p-line${auto}"><b>Identification</b>${esc(ident)}</p>` : '');
 }
 function paperCard(p) {
-  const saved = !!S.user.saved[p.id], read = !!S.user.read[p.id], model = C.byModel(p);
-  const question = p.q ? `<p class="p-question ${model ? '' : 'auto'}">${model ? esc(p.q) : `<span class="badge auto">AUTO-EXTRACTED</span> ${esc(p.q)}`}</p>` : '';
+  const saved = !!S.user.saved[p.id], read = !!S.user.read[p.id];
+  const question = p.q ? `<p class="p-question">${esc(p.q)}</p>` : '';
   const conclusion = p.conclusion ? `<details class="more"><summary>${p.text.includes('conclusion') ? 'Conclusion' : 'Implications'}</summary><p class="p-summary">${esc(p.conclusion)}</p></details>` : '';
   return `<article class="paper ${read ? 'is-read' : ''}" data-id="${esc(p.id)}">
     <div class="p-meta"><span class="journal">${esc(journalShort(p.journal))}</span><span>${p.published ? 'Published ' + dayLabel(p.published) : ''}</span>${isNewToYou(p) ? '<span class="badge new">NEW</span>' : ''}${p.kind === 'review' ? '<span class="badge auto">SURVEY</span>' : ''}${p.kind === 'working' ? '<span class="badge auto">WORKING PAPER</span>' : ''}${S.user.notes[p.id] ? '<span class="badge auto">NOTE</span>' : ''}</div>
@@ -585,7 +473,7 @@ function paperCard(p) {
     <div class="p-authors">${authorLinks(p)}</div>
     ${question}
     ${keyLines(p)}
-    ${p.summary ? `<p class="p-summary">${esc(p.summary)}</p>` : '<p class="p-summary muted">No abstract was available from the indexes for this paper yet.</p>'}
+    ${p.summary ? `<p class="p-summary">${esc(p.summary)}</p>` : ''}
     ${conclusion}
     <div class="p-tags">${tagChips(p)}</div>
     <div class="p-actions"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
@@ -643,7 +531,7 @@ function currentPaperList() {
 function latestHtml(library = false) {
   const list = sortPapers(library ? S.visible : C.publishedThisWeek(S.visible, S.today)), shown = list.slice(0, S.limit);
   const sinceVisit = S.prevVisit ? S.papers.filter(isNewToYou).length : 0;
-  const modelShare = list.length ? list.filter(C.byModel).length / list.length : 0;
+  const concShare = list.length ? list.filter(p => p.text.includes('conclusion')).length / list.length : 0;
   // One chip per day: several runs on the same day (a backfill, a manual re-run) are one update.
   const byDay = new Map();
   for (const r of S.index.runs || []) { const day = r.at.slice(0, 10); byDay.set(day, (byDay.get(day) || 0) + (r.added || 0)); }
@@ -666,7 +554,7 @@ function latestHtml(library = false) {
       <select id="export" aria-label="Export these papers"><option value="">Export…</option><option value="bib">BibTeX</option><option value="ris">RIS (Zotero)</option><option value="csv">CSV</option></select></div></div>
     <div class="stats"><div class="stat"><strong>${fmt(list.length)}</strong><span>${library ? 'papers in view' : 'published in the past 7 days'}</span></div>
       <div class="stat"><strong>${fmt(sinceVisit)}</strong><span>new since your last visit${S.prevVisit ? ' (' + dayLabel(S.prevVisit, { day: 'numeric', month: 'short' }) + ')' : ''}</span></div>
-      <div class="stat"><strong>${pct(modelShare)}</strong><span>summarised by the model; the rest are auto-extracted</span></div>
+      <div class="stat"><strong>${pct(concShare)}</strong><span>summaries that also read the paper’s open-access conclusion</span></div>
       <div class="stat"><strong>${fmt(new Set(list.map(p => p.journal)).size)}</strong><span>journals represented</span></div></div>
     ${library && runs.length > 1 ? `<div class="chips" aria-label="Recent updates">${runs.map(r => `<button type="button" class="chip btnish" data-act="run" data-day="${r.at.slice(0, 10)}" aria-pressed="${S.filters.run === r.at.slice(0, 10)}" title="Papers added in this update">${dayLabel(r.at.slice(0, 10), { day: 'numeric', month: 'short' })} · ${plural(r.added, 'paper')}</button>`).join('')}</div>` : ''}
     ${library ? '' : latestSpotlight()}
@@ -698,8 +586,6 @@ function related(p, n = 5) {
 function openPaper(id) {
   const p = S.byId?.get(id) || S.papers.find(x => x.id === id);
   if (!p) return;
-  const year = (p.published || p.added).slice(0, 4);
-  if (!p.abstract && !abstractsLoaded.has(year)) { loadAbstracts(year).then(() => { if ($('#dialog').open) openPaper(id); }); }
   const saved = !!S.user.saved[p.id], read = !!S.user.read[p.id];
   const row = (label, value) => (value ? `<dt>${label}</dt><dd>${value}</dd>` : '');
   const firsts = (S.firsts.get(p.id) || []).map(i => `<span class="chip first">✦ ${esc(C.describeFirst(i, S.ctx))}</span>`).join('');
@@ -718,7 +604,6 @@ function openPaper(id) {
       ${row('Institutions', esc([...new Set(p.authors.map(a => a.inst).filter(Boolean))].join('; ')))}
     </dl>
     ${firsts ? `<div class="chips" style="margin-bottom:12px">${firsts}</div>` : ''}
-    ${p.abstract ? `<details class="more"><summary>Abstract excerpt (as indexed)</summary><p class="p-summary">${esc(p.abstract)}</p></details>` : ''}
     <div class="p-actions" style="margin:14px 0" data-id="${esc(p.id)}"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
       <a class="btn small" href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>${p.pdf ? `<a class="btn ghost small" href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}
       <button type="button" class="btn ghost small" data-act="cite">Copy BibTeX</button>${zoteroButton(p, { detail: true })}<button type="button" class="btn ghost small" data-act="in-network">Show in network</button></div>
@@ -733,12 +618,11 @@ function openPaper(id) {
 
 // ---- shared click handling -------------------------------------------------------------
 function onMainClick(e) {
-  const t = e.target.closest('[data-act],[data-open],[data-select],[data-goto],[data-nl-fam]');
+  const t = e.target.closest('[data-act],[data-open],[data-select],[data-goto]');
   if (!t) return;
   if (t.dataset.open) return openPaper(t.dataset.open);
   if (t.dataset.select) return selectNode(t.dataset.select, true);
   if (t.dataset.goto) { location.hash = t.dataset.goto; return; }
-  if (t.dataset.nlFam) { const list = nlFamilies(), k = t.dataset.nlFam; S.prefs.nlFamilies = list.includes(k) ? list.filter(x => x !== k) : [...list, k]; savePrefs(); renderNewsletter(); return; }
   const card = t.closest('[data-id]'), id = card?.dataset.id, act = t.dataset.act;
   if (act === 'spotlight-prev' || act === 'spotlight-next' || act === 'spotlight-select') {
     moveSpotlight(act === 'spotlight-next' ? 1 : -1, act === 'spotlight-select' ? Number(t.dataset.index) : undefined);
@@ -1227,22 +1111,23 @@ function sourcesHtml() {
   const runs = S.index.runs || [], last = runs[0];
   const per = {}; const lastAdded = {};
   for (const p of S.papers) { per[p.journal] = (per[p.journal] || 0) + 1; if (!lastAdded[p.journal] || p.added > lastAdded[p.journal]) lastAdded[p.journal] = p.added; }
-  const model = S.papers.filter(C.byModel).length, withConc = S.papers.filter(p => p.text.includes('conclusion')).length;
+  const withConc = S.papers.filter(p => p.text.includes('conclusion')).length, waiting = S.index.waiting || 0;
   const nr = nextRun();
   const journals = S.config.journalGroups.map(g => `<tr><th colspan="4" style="padding-top:16px">${esc(g.label)}</th></tr>${S.config.journals.filter(j => j.group === g.key).map(j => `<tr><td>${esc(j.name)} <span class="muted small">${esc(j.short)}</span></td><td class="num">${per[j.key] || 0}</td><td class="small">${lastAdded[j.key] ? dayLabel(lastAdded[j.key]) : '—'}</td><td class="small">${j.enabled === false ? 'Paused' : 'Collecting'}</td></tr>`).join('')}`).join('');
   return `<div class="heading"><div><h1>Sources & settings</h1><p>Where the papers come from, how they are summarised, and what stays on this device.</p></div></div>
     <div class="stats"><div class="stat"><strong>${fmt(S.papers.length)}</strong><span>papers kept in the radar</span></div><div class="stat"><strong>${last ? dayLabel(last.at.slice(0, 10), { day: 'numeric', month: 'short' }) : '—'}</strong><span>last update${last ? ` · ${last.added} added` : ''}</span></div>
-      <div class="stat"><strong>${nr ? nr.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</strong><span>next weekly update (Tuesdays, morning, Paris time)</span></div><div class="stat"><strong>${pct(S.papers.length ? model / S.papers.length : 0)}</strong><span>summarised by a model · ${pct(S.papers.length ? withConc / S.papers.length : 0)} also read the conclusion</span></div></div>
-    ${model < S.papers.length ? `<div class="notice" style="margin-bottom:16px"><b>${fmt(S.papers.length - model)} papers still have keyword-based summaries</b> (marked “auto-extracted”). They are being summarised in weekly batches, newest first.</div>` : ''}
+      <div class="stat"><strong>${nr ? nr.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</strong><span>next weekly update (Tuesdays, morning, Paris time)</span></div><div class="stat"><strong>${pct(S.papers.length ? withConc / S.papers.length : 0)}</strong><span>summaries that also read the paper’s open-access conclusion</span></div></div>
+    ${waiting ? `<div class="notice" style="margin-bottom:16px"><b>${fmt(waiting)} more papers are collected and waiting for their summary.</b> They appear here once a model has summarised them, newest first.</div>` : ''}
     <div class="grid-2"><div class="panel setup"><span class="eyebrow">How it works</span>
         <ol><li>Every Tuesday morning, after NBER's Monday release, the collector asks <b>OpenAlex</b> for new articles in the ${S.config.journals.filter(j => j.kind !== 'working').length} journals below and reads <b>NBER</b>'s own list of working papers, each dated to its release day. The radar covers everything they published since ${dayLabel(S.config.since || '2020-01-01', { month: 'long', year: 'numeric' })}.</li>
-        <li>Missing abstracts are filled from <b>Crossref</b> and <b>Semantic Scholar</b>. When a legal open-access copy exists, its <b>conclusion section</b> is read. Publishers that block scripts are skipped.</li>
+        <li>Missing abstracts are filled from <b>Crossref</b> and <b>Semantic Scholar</b>. When a legal open-access copy exists, its <b>conclusion section</b> is read. Publishers that block scripts are skipped. Abstracts and conclusions are only read to write the summary: they are never published here.</li>
         <li><b>Claude</b> then writes each paper's research question, contribution, summary and identification strategy, and tags its fields, methods, data, topics, setting and JEL codes against fixed lists. The tags are checked against those lists before anything is published.</li>
-        <li>The <a href="#newsletter">weekly newsletter</a> recaps what the update added. Papers are never dropped, so the network and the trends build up over time.</li></ol></div>
+        <li>A paper is published here only once its summary is written. Papers are never dropped, so the network and the trends build up over time.</li></ol></div>
       <div class="panel setup"><span class="eyebrow">Reading the summaries</span>
-        <ol><li>Summaries come from the abstract and, when available, the conclusion: they are a guide to what to read, not a substitute. Check the paper before citing it.</li>
-        <li>Lines marked <span class="badge auto">AUTO-EXTRACTED</span> are sentences taken from the abstract by keyword rules, waiting for their model summary.</li>
-        <li>Saved papers, read marks, notes and followed authors stay in this browser only (back them up below). Nothing you do here is sent anywhere, except the email you give to subscribe.</li></ol></div></div>
+        <ol><li>Every question, contribution, summary and identification line is written by a language model (named in each paper’s details) from the abstract and, when available, the conclusion. Models make mistakes: the summaries are a guide to what to read, not a substitute. Check the paper before citing it.</li>
+        <li>Titles, authors and links come from the indexes and the publishers. The papers belong to their authors and publishers: follow the Article link to read them.</li></ol></div></div>
+    <div class="panel setup privacy" style="margin-top:16px"><span class="eyebrow">Privacy</span>
+      <p>EconRadar has no accounts, no cookies, no analytics, no advertising and no session recording. Saved papers, read marks, notes, followed authors and filters are kept in this browser’s storage and are never sent anywhere. The app, its fonts and its data all load from this site, which GitHub Pages hosts (GitHub receives your IP address to serve the pages). The only other requests are the ones you start: opening an article or PDF link, and, if you connect it in Settings, saving a reference to Zotero (your key stays in this browser and goes straight to zotero.org). <a href="https://rfernex.github.io/legal.html" target="_blank" rel="noopener">Legal notice and privacy ↗</a></p></div>
     <div class="section-head"><h2>Journals & working papers</h2><p>Edit <code>radar/config.json</code> to add or pause one</p></div>
     <div class="panel table-scroll"><table class="data"><thead><tr><th>Source</th><th class="num">Papers</th><th>Last added</th><th>Status</th></tr></thead><tbody>${journals}</tbody></table></div>
     <div class="section-head"><h2>Update log</h2></div>
@@ -1260,7 +1145,6 @@ function bindMain() {
   main.addEventListener('change', e => {
     if (S.view === 'network') onNetworkEvent(e);
     if (e.target.id === 'sort') { S.prefs.sort = e.target.value; savePrefs(); render(); }
-    if (e.target.id === 'nl-issue') location.hash = 'newsletter/' + e.target.value;
     if (e.target.id === 'export') { exportPapers(e.target.value); e.target.value = ''; }
     if (e.target.id === 'trend-scope') { S.prefs.trendScope = e.target.value; savePrefs(); render(); }
     if (e.target.id === 'import-file') importUser(e.target.files[0]);

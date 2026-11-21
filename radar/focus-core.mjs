@@ -68,14 +68,8 @@ export function prepareFocus(data, spec, { radar = [], ctx = null } = {}) {
   return { spec, papers, byId, strands: new Map(spec.strands.map((s, i) => [s.key, { ...s, i }])), outcomes: new Map((spec.outcomes || []).map(o => [o.key, o])) };
 }
 
-const searchText = p => fold([p.title, p.abstract, p.q, p.venue, p.topics.join(' '), p.authors.map(a => a.n).join(' '), p.geo.join(' ')].join(' '));
+const searchText = p => fold([p.title, p.summary, p.q, p.venue, p.topics.join(' '), p.authors.map(a => a.n).join(' '), p.geo.join(' ')].join(' '));
 
-/** Abstracts come in a second file, loaded after the tab shows; they join the search text. */
-export function attachAbstracts(F, abstracts) {
-  let n = 0;
-  for (const p of F.papers) { const a = abstracts?.[p.id]; if (a && !p.abstract) { p.abstract = String(a); p.text = searchText(p); n++; } }
-  return n;
-}
 
 export function cleanFocusFilters(raw = {}, spec) {
   const keys = new Set(spec.strands.map(s => s.key)), outs = new Set((spec.outcomes || []).map(o => o.key));

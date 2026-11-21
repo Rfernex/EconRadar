@@ -13,10 +13,11 @@ indexed late. A search costs ten ordinary requests on OpenAlex's free tier (abou
 searches a day per IP address without OPENALEX_API_KEY), so a pass that runs out of
 budget resumes where it stopped on the next run.
 
-Papers are stored in radar/data/focus-<area>.json, their abstracts in
-focus-<area>-abstracts.json (the app loads them second) and the OpenAlex ids of all their
-references in focus-<area>-refs.json. The papers file lists, for each paper, the references
-that are themselves in the area: the citation map is drawn from those. Tags
+Papers are stored privately in .radar-cache/store (git-ignored): focus-<area>.json, their
+abstracts in focus-<area>-abstracts.json and the OpenAlex ids of all their references in
+focus-<area>-refs.json. The papers file lists, for each paper, the references that are
+themselves in the area: the citation map is drawn from those. The app's copy,
+radar/data/focus-<area>.json, holds only the papers a model has summarised, with no abstract. Tags
 come from the radar's keyword rules (fields, methods, data, places) plus the area's
 strands and outcomes; with ANTHROPIC_API_KEY, Claude summarises the newest papers first.
 """
@@ -181,7 +182,8 @@ def tag_with_rules(record, keywords, tax):
 # Storage
 # ---------------------------------------------------------------------------
 class AreaStore:
-    def __init__(self, root, key):
+    def __init__(self, root, key, public=None):
+        self.public = public and public / f'focus-{key}.json'
         self.path = root / f'focus-{key}.json'
         self.refs_path, self.abstracts_path = root / f'focus-{key}-refs.json', root / f'focus-{key}-abstracts.json'
         data = json.loads(self.path.read_text()) if self.path.exists() else {}
@@ -298,21 +300,30 @@ class AreaStore:
             p['cites'] = [r for r in dict.fromkeys(cites) if r in ids and r != pid]
 
     def save(self, area, today):
-        """Three files: the papers without their abstracts (what the Focus tab loads first), the
-        abstracts (loaded next, in the background) and every paper's references (collector only)."""
+        """Three private files: the papers without their abstracts, the abstracts and every paper's
+        references. With `public`, also the app's copy: the summarised papers only, citing each other."""
         self.merged = self.merge_duplicates()
         self.link()
         rows = sorted(self.papers.values(), key=lambda p: (p.get('published', ''), p['id']), reverse=True)
-        slim = [{k: v for k, v in p.items() if k != 'abstract' and v not in ('', [], None) and v is not False
-                 and not (k == 'url' and v == f"https://doi.org/{p.get('doi')}")} for p in rows]
+        slim = lambda p: {k: v for k, v in p.items() if k != 'abstract' and v not in ('', [], None) and v is not False
+                          and not (k == 'url' and v == f"https://doi.org/{p.get('doi')}")}
         # Compact JSON, one paper per line: small files, and readable diffs in git.
         dump = lambda obj: json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
-        head = dump({'version': 1, 'key': area['key'], 'title': area['title'], 'since': area['since'], 'updated': today.isoformat(),
-                     'searches': self.state, 'total': len(rows), 'aliases': self.alias})
-        self.path.write_text(head[:-1] + ',"papers":[\n' + ',\n'.join(dump(p) for p in slim) + '\n]}\n')
+        meta = {'version': 1, 'key': area['key'], 'title': area['title'], 'since': area['since'], 'updated': today.isoformat()}
+        write = lambda path, head, papers: path.write_text(dump(head)[:-1] + ',"papers":[\n' + ',\n'.join(dump(p) for p in papers) + '\n]}\n')
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        write(self.path, {**meta, 'searches': self.state, 'total': len(rows), 'aliases': self.alias}, [slim(p) for p in rows])
         lines = lambda pairs: '{\n' + ',\n'.join(f'{dump(k)}:{dump(v)}' for k, v in pairs) + '\n}\n'
         self.abstracts_path.write_text(lines((p['id'], p['abstract']) for p in rows if p.get('abstract')))
         self.refs_path.write_text(lines((k, self.refs[k]) for k in sorted(self.refs) if k in self.papers))
+        if self.public:
+            shown = [slim(p) for p in rows if cl.summarised(p)]
+            ids = {p['id'] for p in shown}
+            for p in shown:
+                if 'cites' in p:
+                    p['cites'] = [c for c in p['cites'] if c in ids]
+            self.public.parent.mkdir(parents=True, exist_ok=True)
+            write(self.public, {**meta, 'total': len(shown)}, [p for p in shown])
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +423,7 @@ def main(argv=None):
     p.add_argument('--time-budget', type=float, default=15, help='minutes after which no new summaries start')
     p.add_argument('--area', help='only this area')
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--store-dir', default=str(cl.STORE), help=argparse.SUPPRESS)
     p.add_argument('--data-dir', default=str(cl.DATA), help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -428,7 +440,7 @@ def main(argv=None):
     for spec in focus['areas']:
         if args.area and spec['key'] != args.area:
             continue
-        store = AreaStore(Path(args.data_dir), spec['key'])
+        store = AreaStore(Path(args.store_dir), spec['key'], public=Path(args.data_dir))
         area = update_area(spec, tax, store, searcher, today)
         summarised = model_pass(store, area, tax, provider, model_budget, today, deadline)
         unfinished = [sid for sid, st in store.state.items() if not st.get('full') or st.get('next')]

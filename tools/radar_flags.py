@@ -103,6 +103,7 @@ def main(argv=None):
     state.add_argument('--dismissed', action='store_true')
     ap.add_argument('--reason', default='', help='resolve: what was changed, or why the flag was dismissed')
     ap.add_argument('--csv', help='read the responses from this file instead of ECONRADAR_FLAGS_CSV')
+    ap.add_argument('--store-dir', default=str(cl.STORE), help=argparse.SUPPRESS)
     ap.add_argument('--data-dir', default=str(cl.DATA), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
@@ -114,7 +115,7 @@ def main(argv=None):
         print('ECONRADAR_FLAGS_CSV is not set: no flags to read.')
         return 0
     flags, decisions = parse(text), load_decisions()
-    store = cl.Store(Path(args.data_dir))
+    store = cl.Store(Path(args.store_dir), public=Path(args.data_dir))
 
     if args.command == 'list':
         shown = [f for f in flags if args.all or f['flag'] not in decisions]

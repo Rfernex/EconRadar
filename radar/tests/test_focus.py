@@ -100,6 +100,23 @@ class Focus(unittest.TestCase):
             self.assertEqual(first['by'], 'rules')
             self.assertNotIn('summary', saved['papers'][1], 'rules summaries would only repeat the abstract')
 
+    def test_public_copy_has_only_summarised_papers_citing_each_other(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            public = Path(tmp) / 'public'
+            store = cf.AreaStore(Path(tmp) / 'store', 'x', public=public)
+            for n, title in ((1, 'Universal Basic Income and Work'), (2, 'Universal Basic Income in Finland'), (3, 'Universal Basic Income and Spending')):
+                store.put(*cf.record_from(work(n, title=title, refs=[2, 3]), self.area, TODAY), TAX, TODAY)
+            store.papers['W1'].update(by='claude-sonnet-5-5', summary='Labour supply holds.', q='', ident='', contribution='')
+            store.papers['W3'].update(by='claude-sonnet-5-5', summary='Spending rises.', q='', ident='', contribution='')
+            store.save({'key': 'x', 'title': 'X', 'since': '2015-01-01'}, TODAY)
+            shown = json.loads((public / 'focus-x.json').read_text())
+            self.assertEqual({p['id']: p.get('cites', []) for p in shown['papers']}, {'W1': ['W3'], 'W3': []})
+            self.assertEqual(shown['total'], 2)
+            self.assertNotIn('searches', shown)
+            self.assertEqual(sorted(f.name for f in public.iterdir()), ['focus-x.json'], 'no abstracts or references published')
+            self.assertNotIn('We study', (public / 'focus-x.json').read_text())
+            self.assertEqual(len(json.loads((Path(tmp) / 'store' / 'focus-x.json').read_text())['papers']), 3)
+
     def test_duplicates_merge_into_the_journal_version_and_citations_follow(self):
         title = 'Universal Basic Income and the Labor Supply of Young Adults'
         with tempfile.TemporaryDirectory() as tmp:

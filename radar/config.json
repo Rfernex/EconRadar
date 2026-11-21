@@ -4,7 +4,6 @@
   "lookbackDays": 60,
   "since": "2020-01-01",
   "feedback": {"form": "", "about": "Google Form pre-filled link with PAPERID and PAPERTITLE as the answers to the paper id and title questions: each paper then shows a 'Flag it' link. Responses are read by tools/radar_flags.py."},
-  "newsletter": {"buttondown": "fernex", "about": "Buttondown username: the Newsletter tab shows the subscribe form once it is set. Field families are the subscriber tags."},
   "families": [
     {"key": "labour", "label": "Labour & human capital", "slot": 1},
     {"key": "public", "label": "Public & law", "slot": 2},

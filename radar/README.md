@@ -1,10 +1,10 @@
 # EconRadar
 
-Every paper since 2020 from 20 leading economics journals and NBER, updated weekly, summarised by Claude, tagged, mapped, and recapped in a weekly newsletter. Installable like the other apps; it works offline with the last papers it loaded.
+Every paper since 2020 from 20 leading economics journals and NBER, updated weekly, summarised by Claude, tagged and mapped. Installable like the other apps; it works offline with the last papers it loaded.
 
 ## What it does
 
-Visitors can browse, filter, save papers on their own device, send references to Zotero and subscribe to the newsletter. All collecting and summarising happens in the weekly update.
+Visitors can browse, filter, save papers on their own device and send references to Zotero. All collecting and summarising happens in the weekly update. The app shows only papers a model has summarised, and never an abstract.
 
 - **Latest**: every new paper with its research question, a 2–3 sentence summary, what the conclusion says (when an open-access copy could be read), and tags for field, method, data, topics. Papers new since your last visit are marked. Save, mark read, add a private note, export BibTeX / RIS / CSV.
 - **Network**, three lenses on whatever the filters select:
@@ -12,10 +12,9 @@ Visitors can browse, filter, save papers on their own device, send references to
   - *Papers*: each paper linked to its nearest neighbours, matched on what you choose: topic and literature, methodological approach, identification strategy, data, authors, or everything. Clicking a paper shows what it shares with each neighbour.
   - *Authors*: who publishes in which field and with whom.
   - **Replay history** rebuilds the network week by week by publication date. Click a node, then one of its ties, to list the papers that combine the two.
-- **Newsletter**: the weekly two-page issue (page 2 for the fields you pick) and the subscribe form.
 - **Authors**: who is active in what (heat map by field family), sortable by output, recent activity or name; profiles with field/method mix, co-authors and papers. Follow authors to have their new papers flagged.
 - **Trends**: papers per quarter or month by field family; methods, data, topics or fields over time (share of papers, small multiples); what is rising or fading (last 90 days against before); a **frontier log** of firsts (the first time a method or data source shows up in a field since the radar started); the latest research questions.
-- **Filters** (shared by every view): text search, publication date (presets or a range; NBER papers carry the day NBER released them), field or field family, method, data, source (journal or NBER), author, saved, unread, followed authors, model-summarised only. On Latest, the update chips show what one collection added.
+- **Filters** (shared by every view): text search, publication date (presets or a range; NBER papers carry the day NBER released them), field or field family, method, data, source (journal or NBER), author, saved, unread, followed authors. On Latest, the update chips show what one collection added.
 
 ## Where the papers come from
 
@@ -23,12 +22,13 @@ The corpus is every article published since January 2020 in 20 leading economics
 
 1. **OpenAlex** lists the journal articles (authors with stable ids, institutions, abstracts). **NBER** papers come from NBER's own listing and paper pages, each dated to its release day; OpenAlex adds author ids.
 2. Missing abstracts come from **Crossref** and **Semantic Scholar**. For new papers, a legal open-access PDF's conclusion is read and kept on the Mac (`.radar-cache/`, never published) until the paper is summarised.
-3. **Claude** writes each paper's question, contribution, summary, conclusion, identification and tags in a working session (no API key), validated against the lists in `config.json`. Until then keyword rules tag the paper ("auto-extracted").
-4. Papers are stored by publication year: `data/papers-YYYY.json` (one paper per line, loaded newest year first) and `data/abstracts-YYYY.json` (fetched when a paper is opened); `data/index.json` lists the years and the run log. Nothing is removed unless its journal leaves the list.
+3. **Claude** writes each paper's question, contribution, summary, conclusion, identification and tags in a working session (no API key), validated against the lists in `config.json`. Until then keyword rules tag the paper, from sentences of its abstract, for internal use only.
+4. The full store is private, on the Mac: `.radar-cache/store/` (git-ignored) holds `papers-YYYY.json` (one paper per line), `abstracts-YYYY.json` and `index.json` (the years and the run log). Nothing is removed unless its journal leaves the list.
+5. Every save also writes the app's copy, `radar/data/`: `papers-YYYY.json` with only the papers a model has summarised, and `index.json` (the years, the run log, and `waiting`, the number of papers still without a summary). No abstract, and no keyword-rule text taken from one, is ever published. Abstracts are copyrighted by their authors or publishers: they are used only as input to the summaries.
 
 ### The weekly update
 
-Two scheduled tasks in the Claude desktop app follow [`tools/WEEKLY.md`](../tools/WEEKLY.md), working in their own git worktree (`../econradar-routine`, made by `tools/radar_routine.py setup`) so they never touch uncommitted work in this checkout, and one at a time (a lock in `.radar-cache/`). **EconRadar weekly update** (Tuesdays, after NBER's Monday release) collects, summarises the week's papers, builds the newsletter draft, reports readers' flags and pushes `radar/data`. **EconRadar catch-up** summarises 250 backlog papers per run, four times a day, within at most 25% of the weekly plan allowance: `radar_routine.py budget` reads the app's usage meters and stops the run past that share (ledger in `.radar-cache/catchup-budget.json`), and it also skips runs when the 5-hour window is 75% full. Disable it once `radar_batch.py status` shows no papers left. Both run only while the Mac is awake and the app open. The GitHub workflow is kept for manual collection only.
+Two scheduled tasks in the Claude desktop app follow [`tools/WEEKLY.md`](../tools/WEEKLY.md), working in their own git worktree (`../econradar-routine`, made by `tools/radar_routine.py setup`) so they never touch uncommitted work in this checkout, and one at a time (a lock in `.radar-cache/`). **EconRadar weekly update** (Tuesdays, after NBER's Monday release) collects, summarises the week's papers, reports readers' flags and pushes `radar/data`. **EconRadar catch-up** summarises 250 backlog papers per run, four times a day, within at most 25% of the weekly plan allowance: `radar_routine.py budget` reads the app's usage meters and stops the run past that share (ledger in `.radar-cache/catchup-budget.json`), and it also skips runs when the 5-hour window is 75% full. Disable it once `radar_batch.py status` shows no papers left. Both run only while the Mac is awake and the app open. Collection runs only on the Mac, where the private store is: there is no cloud workflow.
 
 Summaries by hand (a catch-up, or the backlog):
 
@@ -39,26 +39,19 @@ python3 tools/radar_batch.py export --n 25 --out /tmp/batch.md
 python3 tools/radar_batch.py import --answers /tmp/answers.json --by claude-sonnet-5-5
 ```
 
-### The newsletter
-
-`tools/newsletter.py` builds each week's issue (`data/newsletter/<date>.json`, shown in the app's **Newsletter** tab) from the papers the week added: page 1 for everyone (highlights, methods and identification strategies, three-month trends), page 2 per field family (in the app: a data-by-identification chart, key papers with the earlier papers they relate to, a ranked author table; in the email: the top paper and a link). Every subscriber gets the same email: page 2 has one short block per field, linking to the field's full section in the app (`#newsletter/<date>/<field>`), where readers pick their fields (remembered on their device). Per-subscriber fields would need Buttondown's paid tagging add-on.
-
-Setup, once: create a Buttondown account, put its username in `config.json` → `newsletter.buttondown` (the subscribe form appears), and make `BUTTONDOWN_API_KEY` available to the scheduled task (e.g. in `~/.zshenv`). The routine only creates drafts; review and send them from Buttondown (`newsletter.py send --publish` sends directly). Tags may need a paid Buttondown plan; without them everyone gets every section.
-
 ### Readers' flags
 
 Each paper links to a Google Form ("Something inaccurate in this summary? Flag it") pre-filled with the paper's id and title; the reader says what is wrong and adds a note. Nothing a reader sends changes the app: the flags wait for the maintainer.
 
 Setup, once: create a Google Form with short-answer questions **Paper id** and **Paper title**, a checkbox question **What is inaccurate?** (question, contribution, summary, identification, tags, other) and a paragraph question **Your note**. Use *Get pre-filled link*, answer `PAPERID` and `PAPERTITLE` to the first two, and put the link in `config.json` → `feedback.form`. Link the form to a responses sheet, share the sheet as "anyone with the link can view", and put its CSV export link (`https://docs.google.com/spreadsheets/d/<id>/export?format=csv`) in `ECONRADAR_FLAGS_CSV` (e.g. in `~/.zshenv`), never in the repository.
 
-`python3 tools/radar_flags.py list` shows the open flags, each with the paper's current summary and abstract. The weekly update lists them in its report with a suggested correction but changes nothing. To act on one, ask a session to fix it (it re-answers the paper or corrects the field), then `radar_flags.py resolve <flag> --fixed`, which marks the paper "corrected after a reader's flag" in the app; or `resolve <flag> --dismissed --reason "..."`. Decisions are kept on the Mac in `.radar-cache/flags.json`.
+`python3 tools/radar_flags.py list` shows the open flags, each with the paper's current summary and abstract (printed locally, from the private store). The weekly update lists them in its report with a suggested correction but changes nothing. To act on one, ask a session to fix it (it re-answers the paper or corrects the field), then `radar_flags.py resolve <flag> --fixed`, which marks the paper "corrected after a reader's flag" in the app; or `resolve <flag> --dismissed --reason "..."`. Decisions are kept on the Mac in `.radar-cache/flags.json`.
 
 ### Running it by hand
 
 ```
 python3 tools/collect_literature.py --no-model                       # new papers (60-day window)
 python3 tools/collect_literature.py --no-model --since 2020-01-01 --max-pdfs 0   # rebuild
-python3 tools/newsletter.py build && python3 tools/newsletter.py render
 ```
 
 Needs Python 3.12 and `pip install pypdf` for conclusions.
@@ -71,11 +64,11 @@ Append to `journals` in `config.json` with its OpenAlex source id (`https://api.
 
 `radar/focus.json` defines literatures followed in depth, beyond the radar's journals: today *Basic income, cash transfers & wealth taxation*, every paper since January 2015 in any journal, working-paper series or book that OpenAlex indexes (about 7,500 papers, with the citations between them). The **Focus** tab shows it: what is new, the most cited papers within the literature, papers per year by strand, which outcomes each strand studies, a citation map that grows year by year, the authors, and for each paper what it builds on, who cites it and which papers share its references. By default it hides unindexed venues (switch on *All venues* to see everything).
 
-The tab appears only on devices where it was switched on: open `…/radar/#focus` once in that browser (*Hide it on this device* at the bottom of the tab undoes it). Nothing else links to it, but the data files are public like the rest of the site, so this keeps it out of view without making it private.
+The tab appears only on devices where it was switched on: open `…/radar/#focus` once in that browser (*Hide it on this device* at the bottom of the tab undoes it). Nothing else links to it, but its data file is public like the rest of the site, so this keeps it out of view without making it private. As in the radar, it shows only the papers a model has summarised.
 
 `tools/collect_focus.py` runs after the radar's collector. Each strand is a set of OpenAlex searches (quoted phrases in titles, or titles and abstracts) confirmed by a regular expression; an optional `exclude` pattern drops other senses of a phrase. A strand is read in full once, then each run asks for the last 120 days, and every 30 days a full pass refreshes citation counts. Duplicate records (a working paper and its journal version, a preprint posted twice) are merged into the journal version. Editing a pattern re-tags the stored papers on the next run, and papers that no longer match a title-only strand leave. Searches cost ten ordinary OpenAlex requests: without `OPENALEX_API_KEY` a run makes at most 30 (about 100 a day are shared by everyone on the runner's IP), with a key 60. With `ANTHROPIC_API_KEY`, Claude summarises up to 40 focus papers a run, newest first; free OpenRouter models are kept for the radar's own new papers.
 
-Files: `data/focus-<area>.json` (papers, loaded first), `data/focus-<area>-abstracts.json` (loaded in the background), `data/focus-<area>-refs.json` (every paper's references, for the collector only).
+Files: `.radar-cache/store/focus-<area>.json` (every paper, with the search state), `focus-<area>-abstracts.json` and `focus-<area>-refs.json` (every paper's references), all private. The app reads `radar/data/focus-<area>.json`: the summarised papers only, with the citation links between them.
 
 ```
 python3 tools/collect_focus.py                 # update every area

@@ -1,7 +1,6 @@
 """EconRadar collector: new articles from the journals in radar/config.json.
 
-Runs twice a week from .github/workflows/literature-radar.yml (Tuesday and Friday)
-and by hand from the repository root:
+Runs from the repository root (the weekly routine in tools/WEEKLY.md, or by hand):
 
     python3 tools/collect_literature.py                    # new papers in the lookback window
     python3 tools/collect_literature.py --since 2026-05-01 # backfill from a date
@@ -17,10 +16,12 @@ links; legal open-access PDFs (arXiv, repositories, open publisher copies) suppl
 the conclusion section. Hosts that refuse automated downloads are skipped, never
 worked around. Summaries and tags come from tools/radar_enrich.py.
 
-History is kept: papers are only ever added or upgraded. They are stored by the
-month they were added, in radar/data/papers-YYYY-MM.json, and radar/data/index.json
-lists the files and the run log. Abstracts are kept as excerpts of at most 180 words
-with a link to the article; PDF text is never stored, only what the summary says.
+History is kept: papers are only ever added or upgraded. The full store is private, in
+.radar-cache/store (git-ignored, never published): papers-YYYY.json by publication year,
+abstracts-YYYY.json (excerpts of at most 180 words) and index.json (the files and the run
+log). Each save also writes the app's copy to radar/data: only the papers a model has
+summarised, with no abstract and no sentence copied from one. PDF text is never stored,
+only what the summary says.
 """
 import argparse
 import concurrent.futures as futures
@@ -578,6 +579,9 @@ def main_checkout(root):
 
 CACHE = main_checkout(ROOT) / '.radar-cache'
 CONCLUSIONS = CACHE / 'conclusions.json'
+# The full store (every paper, its abstract, the keyword-rule records) stays on this machine.
+# radar/data receives only what the app may show: papers a model has summarised, without abstracts.
+STORE = CACHE / 'store'
 
 
 def load_conclusions():
@@ -603,20 +607,52 @@ def dump(obj):
 
 
 def slim(p):
-    """A paper as published to the app: no abstract (it has its own file), no empty fields,
-    and no link that the DOI already gives."""
+    """A paper without its abstract (kept in its own file), empty fields, or a link that the DOI
+    already gives."""
     return {k: v for k, v in p.items() if k != 'abstract' and v not in ('', [], None)
             and not (k == 'url' and p.get('doi') and v == f"https://doi.org/{p['doi']}")}
 
 
-class Store:
-    """Papers by publication year: data/papers-YYYY.json (one paper per line, without its
-    abstract) and data/abstracts-YYYY.json, so the app can load the newest year first and
-    fetch an abstract only when a paper is opened. data/index.json lists the years and the
-    run log. Older month files (papers-YYYY-MM.json, abstracts inline) are read and rewritten."""
+def summarised(p):
+    """True when a model wrote the paper's summary. Keyword-rule records reuse sentences of the
+    abstract, so they are never published."""
+    return p.get('by', 'rules') != 'rules'
 
-    def __init__(self, root):
-        self.root = root
+
+def write_years(root, rows, abstracts):
+    """papers-YYYY.json (one paper per line, newest first), with abstracts-YYYY.json when
+    `abstracts`; files of years no longer present are deleted. Returns the index shards."""
+    root.mkdir(parents=True, exist_ok=True)
+    years = {}
+    for p in rows:
+        years.setdefault(year_of(p), []).append(p)
+    shards = []
+    for year, papers in sorted(years.items(), reverse=True):
+        papers.sort(key=lambda p: (p.get('published', ''), p.get('added', ''), p['id']), reverse=True)
+        head = dump({'version': 2, 'year': year})
+        write_text(root / f'papers-{year}.json', head[:-1] + ',"papers":[\n' + ',\n'.join(dump(slim(p)) for p in papers) + '\n]}\n')
+        shard = {'year': year, 'file': f'papers-{year}.json', 'count': len(papers)}
+        if abstracts:
+            pairs = [(p['id'], p['abstract']) for p in papers if p.get('abstract')]
+            write_text(root / f'abstracts-{year}.json', '{\n' + ',\n'.join(f'{dump(k)}:{dump(v)}' for k, v in pairs) + '\n}\n')
+            shard['abstracts'] = f'abstracts-{year}.json'
+        shards.append(shard)
+    keep = {s['file'] for s in shards} | {s.get('abstracts') for s in shards}
+    for path in list(root.glob('papers-*.json')) + list(root.glob('abstracts-*.json')):
+        if path.name not in keep:
+            path.unlink()
+    return shards
+
+
+class Store:
+    """Every paper, by publication year, in `root` (the private store, .radar-cache/store):
+    papers-YYYY.json (one paper per line, without its abstract), abstracts-YYYY.json and
+    index.json (the years and the run log). With `public` (radar/data), each save also writes
+    the app's copy there: only the papers a model has summarised, and no abstracts.
+    Older month files (papers-YYYY-MM.json, abstracts inline) are read and rewritten."""
+
+    def __init__(self, root, public=None):
+        self.root, self.public = root, public
         self.index_path = root / 'index.json'
         self.index = json.loads(self.index_path.read_text()) if self.index_path.exists() else {
             'version': 2, 'shards': [], 'runs': []}
@@ -669,27 +705,21 @@ class Store:
         return len(gone)
 
     def save(self, run=None):
-        self.root.mkdir(parents=True, exist_ok=True)
-        years = {}
-        for p in self.rows.values():
-            years.setdefault(year_of(p), []).append(p)
-        shards = []
-        for year, rows in sorted(years.items(), reverse=True):
-            rows.sort(key=lambda p: (p.get('published', ''), p.get('added', ''), p['id']), reverse=True)
-            head = dump({'version': 2, 'year': year})
-            write_text(self.root / f'papers-{year}.json', head[:-1] + ',"papers":[\n' + ',\n'.join(dump(slim(p)) for p in rows) + '\n]}\n')
-            abstracts = [(p['id'], p['abstract']) for p in rows if p.get('abstract')]
-            write_text(self.root / f'abstracts-{year}.json', '{\n' + ',\n'.join(f'{dump(k)}:{dump(v)}' for k, v in abstracts) + '\n}\n')
-            shards.append({'year': year, 'file': f'papers-{year}.json', 'abstracts': f'abstracts-{year}.json', 'count': len(rows)})
-        keep = {s['file'] for s in shards} | {s['abstracts'] for s in shards}
-        for path in list(self.legacy) + list(self.root.glob('papers-*.json')) + list(self.root.glob('abstracts-*.json')):
-            if path.name not in keep and path.exists():
-                path.unlink()
+        for path in self.legacy:
+            path.unlink(missing_ok=True)
+        shards = write_years(self.root, self.rows.values(), abstracts=True)
         runs = (([run] if run else []) + self.index.get('runs', []))[:300]
         self.index = {'version': 2, 'generatedAt': run['at'] if run else self.index.get('generatedAt', now_utc().isoformat(timespec='seconds')),
                       'total': len(self.rows), 'shards': shards, 'runs': runs}
         write_json(self.index_path, self.index)
+        if self.public:
+            self.publish()
         self.legacy, self.dirty = [], False
+
+    def publish(self):
+        shown = write_years(self.public, [p for p in self.rows.values() if summarised(p)], abstracts=False)
+        total = sum(s['count'] for s in shown)
+        write_json(self.public / 'index.json', {**self.index, 'total': total, 'waiting': len(self.rows) - total, 'shards': shown})
 
 
 def write_text(path, text):
@@ -775,12 +805,13 @@ def parse_args(argv):
                    help='papers to redo with the model: rule-tagged first, then (with Claude) free-model ones (default 60 with a key, 0 without)')
     p.add_argument('--no-model', action='store_true', help='tag with rules only, even if a key is set')
     p.add_argument('--time-budget', type=float, default=80,
-                   help='minutes after which no new model calls start (the workflow allows 100)')
+                   help='minutes after which no new model calls start')
     p.add_argument('--dry-run', action='store_true', help='print what would be added; write nothing')
     p.add_argument('--retag-rules', action='store_true',
                    help='rebuild question, summary, contribution and identification of stored rule-tagged papers, then stop')
     p.add_argument('--redate-nber', action='store_true',
                    help='give stored NBER papers the day NBER released them (from their pages), then stop')
+    p.add_argument('--store-dir', default=str(STORE), help=argparse.SUPPRESS)
     p.add_argument('--data-dir', default=str(DATA), help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
@@ -793,7 +824,7 @@ def main(argv=None):
     if args.retag_rules:
         config = json.loads(CONFIG.read_text())
         tax = enrich.Taxonomy(config)
-        store = Store(Path(args.data_dir))
+        store = Store(Path(args.store_dir), public=Path(args.data_dir))
         done = 0
         for _, p in store.papers():
             if p.get('by') == 'rules':
@@ -808,14 +839,14 @@ def main(argv=None):
         log.info('Rebuilt the text lines of %d rule-tagged papers', done)
         return None
     if args.redate_nber:
-        store = Store(Path(args.data_dir))
+        store = Store(Path(args.store_dir), public=Path(args.data_dir))
         redate_nber(store)
         store.save()
         return None
     deadline = time.monotonic() + args.time_budget * 60
     config = json.loads(CONFIG.read_text())
     tax = enrich.Taxonomy(config)
-    store = Store(Path(args.data_dir))
+    store = Store(Path(args.store_dir), public=Path(args.data_dir))
     journals = {j['openalex']: j for j in config['journals'] if j.get('enabled', True)}
     listed = [j for j in journals.values() if j.get('listing') == 'nber']  # read from NBER's own site
     since = args.since or (started.date() - timedelta(days=config.get('lookbackDays', 60))).isoformat()

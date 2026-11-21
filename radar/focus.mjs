@@ -1,6 +1,6 @@
 // Focus tab: one literature followed in depth (radar/focus.json, data/focus-<area>.json).
 // Loaded by app.mjs only on devices where the tab was switched on (open the app with #focus).
-import * as FC from './focus-core.mjs?v=4';
+import * as FC from './focus-core.mjs?v=5';
 
 let A = null; // helpers handed over by app.mjs
 const st = { F: null, spec: null, updated: '', f: null, tab: 'overview', limit: 40, net: null, upTo: 0, maxNodes: 250, shared: true, selected: null, play: 0, loading: null, bound: false };
@@ -22,7 +22,6 @@ async function load() {
   const data = await A.getJSON(`data/focus-${spec.key}.json`).catch(() => ({ papers: [] }));
   st.spec = spec; st.updated = data.updated || '';
   st.F = FC.prepareFocus(data, spec, { radar: A.S.papers, ctx: A.S.ctx });
-  A.getJSON(`data/focus-${spec.key}-abstracts.json`).then(abs => FC.attachAbstracts(st.F, abs)).catch(() => {});
   st.f = FC.cleanFocusFilters(A.local.get(KEYS.filters, {}), spec);
   st.tab = TABS[A.local.get(KEYS.tab, 'overview')] ? A.local.get(KEYS.tab, 'overview') : 'overview';
   st.upTo = 0;
@@ -52,8 +51,13 @@ function setTab(tab) { st.tab = tab; A.local.set(KEYS.tab, tab); render(); windo
 function render() {
   const main = A.$('#main');
   if (st.tab !== 'map') leave();
-  const list = FC.filterFocus(st.F, st.f, { user: A.S.user });
   const total = st.F.papers.length;
+  if (!total) {
+    A.$('#top-count').textContent = plural(0, 'paper');
+    main.innerHTML = `<div class="heading"><div><h1>${esc(st.spec.title)}</h1><p>No paper of this literature has a summary yet. Papers appear here once a model has summarised them.</p></div></div>`;
+    return;
+  }
+  const list = FC.filterFocus(st.F, st.f, { user: A.S.user });
   A.$('#top-count').textContent = list.length === total ? plural(total, 'paper') : `${fmt(list.length)} of ${plural(total, 'paper')}`;
   const body = { overview: overviewHtml, papers: papersHtml, map: () => mapShellHtml(list), authors: authorsHtml }[st.tab](list);
   main.innerHTML = `<div id="focus-root">
@@ -96,7 +100,7 @@ function filtersHtml() {
     <div class="chips strand-chips" role="group" aria-label="Strands">${st.spec.strands.map(s => `<button type="button" class="chip btnish" data-fstrand="${s.key}" aria-pressed="${f.strands.includes(s.key)}">${dot(s.key)}${esc(s.label)} <span class="muted">${fmt(sN[s.key] || 0)}</span></button>`).join('')}</div>
     <button type="button" class="btn ghost small ff-toggle" data-f="filters" aria-expanded="${!!st.filtersOpen}">${st.filtersOpen ? 'Hide filters' : 'Search & filters'}${more ? ' · on' : ''}</button>
     <div class="filter-row">
-      <input type="search" id="ff-q" placeholder="Search this literature: titles, abstracts, authors, places…" aria-label="Search this literature" value="${esc(f.q)}">
+      <input type="search" id="ff-q" placeholder="Search this literature: titles, summaries, authors, places…" aria-label="Search this literature" value="${esc(f.q)}">
       ${pick('outcomes', 'Outcome', (st.spec.outcomes || []).map(o => ({ value: o.key, label: o.label, count: oN[o.key] })).filter(o => o.count))}
       ${pick('methods', 'Method', methods)}
       ${pick('disc', 'Discipline', Object.entries(dN).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ value: k, label: k, count: n })))}
@@ -200,7 +204,7 @@ function card(p) {
     <div class="p-authors">${p.authors.slice(0, 8).map(a => `<button type="button" data-fauthor="${esc(A.C.authorKey(a))}">${esc(a.n)}</button>`).join('<span aria-hidden="true">·</span>')}${p.authors.length > 8 ? `<span>+${p.authors.length - 8}</span>` : ''}</div>
     ${p.q ? `<p class="p-question${auto}">${model ? '' : '<span class="badge auto">AUTO-EXTRACTED</span> '}${esc(p.q)}</p>` : ''}
     ${contribution ? `<p class="p-line${auto}"><b>Contribution</b>${esc(contribution)}</p>` : ''}${ident ? `<p class="p-line${auto}"><b>Identification</b>${esc(ident)}</p>` : ''}
-    ${p.summary ? `<p class="p-summary">${esc(p.summary)}</p>` : p.abstract ? `<details class="more"><summary>Abstract</summary><p class="p-summary">${esc(p.abstract)}</p></details>` : ''}
+    ${p.summary ? `<p class="p-summary">${esc(p.summary)}</p>` : ''}
     <div class="p-tags">${p.strands.map(s => `<button type="button" class="chip btnish" data-fstrand="${s}">${dot(s)}${esc(strandLabel(s))}</button>`).join('')}${p.outcomes.map(o => `<button type="button" class="chip btnish topic" data-foutcome="${o}">${esc(outcomeLabel(o))}</button>`).join('')}</div>
     <div class="p-actions"><button type="button" class="icon-toggle" data-act="save" aria-pressed="${saved}">${saved ? '★ Saved' : '☆ Save'}</button><button type="button" class="icon-toggle" data-act="read" aria-pressed="${read}">${read ? '✓ Read' : 'Mark read'}</button>
       ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">Article ↗</a>` : ''}${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">Open-access PDF ↗</a>` : ''}<button type="button" class="text-btn" data-fopen="${esc(p.id)}">Details & links</button>${A.zoteroButton(p, { focus: true })}</div>
@@ -316,7 +320,6 @@ function openPaper(id) {
     ${p.q ? `<p class="p-question ${model ? '' : 'auto'}" style="margin-top:14px">${esc(p.q)}</p>` : ''}
     ${(() => { const l = lines(p); return `<div style="display:grid;gap:6px;margin:10px 0">${l.contribution ? `<p class="p-line${model ? '' : ' auto'}"><b>Contribution</b>${esc(l.contribution)}</p>` : ''}${l.ident ? `<p class="p-line${model ? '' : ' auto'}"><b>Identification</b>${esc(l.ident)}</p>` : ''}</div>`; })()}
     ${p.summary ? `<p class="p-summary">${esc(p.summary)}</p>` : ''}
-    ${p.abstract ? `<h3 style="margin-top:14px">Abstract${p.abstract.endsWith('…') ? ' (excerpt)' : ''}</h3><p class="p-summary">${esc(p.abstract)}</p>` : ''}
     <dl class="detail-grid">
       ${row('Strands', p.strands.map(s => dot(s) + ' ' + esc(strandLabel(s))).join(', '))}${row('Outcomes', esc(p.outcomes.map(outcomeLabel).join(', ')))}
       ${row('Discipline', esc([p.disc, p.sub].filter(Boolean).join(' · ')))}${row('Methods', esc(p.methods.map(k => A.S.ctx.label('method', k)).join(', ')))}
