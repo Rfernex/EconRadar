@@ -53,6 +53,8 @@ python3 tools/radar_batch.py import --answers /tmp/econradar-answers.json
 
 - Answer every paper in the batch, from its abstract and conclusion excerpt only. Leave a
   string empty rather than guess; never invent a result.
+- Write in your own words: what you write is published, the abstract is not. `import` rejects
+  an answer that copies 12 or more consecutive words from the abstract or conclusion.
 - `import` prints what it stored and what it rejected (with the reason). Fix rejected answers
   once by re-answering only those ids; if they fail again, move on.
 - Stop when `status` shows `addedThisWeek: 0`. The backlog is the catch-up's job.

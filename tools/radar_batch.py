@@ -107,6 +107,10 @@ def import_answers(target, tax, answers, by, conclusions, dry_run=False):
         except enrich.EnrichError as e:
             rejected[pid] = str(e)
             continue
+        copied = enrich.copied_run(out, p.get('abstract', ''), conclusions.get(pid, ''))
+        if copied:
+            rejected[pid] = f'copies {enrich.COPY_LIMIT}+ consecutive words from the abstract or conclusion ({copied}): rewrite it in your own words'
+            continue
         if target.area:
             out = {k: v for k, v in out.items() if k in ('q', 'contribution', 'summary', 'ident', 'fields', 'methods', 'data',
                                                           'dataDetail', 'topics', 'geo', 'period', 'jel')}

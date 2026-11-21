@@ -200,9 +200,10 @@ def system_prompt(tax, vocabulary=()):
     return f"""You index research papers for EconRadar, a digest of papers from leading economics journals and NBER working papers, kept by an economics researcher. For each paper you receive its metadata, its abstract and, when an open-access copy could be read, an excerpt of its conclusion section. Return one JSON object that summarises and classifies the paper. Researchers skim these entries to decide what to read, and the tags feed a network linking papers by topic, method, identification strategy and data, so a wrong tag is worse than a missing one.
 
 Writing
+- Everything you write is published, while the abstract and the conclusion excerpt are not: they are copyrighted by the authors and publishers. Write every text field in your own words. Never reuse a run of more than 6 consecutive words from the abstract or the conclusion, except names of places, programmes, datasets or institutions, numbers, and standard technical terms. Restate findings and magnitudes, not the authors' sentences. An answer that copies 12 or more consecutive words is rejected.
 - question: the research question as one direct question of at most 30 words, ending with "?". Name the setting, population or mechanism when the paper does. A question, not a topic ("How does X affect Y among Z?").
 - contribution: what is new, in 1-2 sentences of at most 35 words, starting with a verb ("Provides the first causal estimate of ...", "Develops a model in which ..."). Name the specific novelty: the new data, setting, design, estimator or mechanism, and what it improves on when the text says so. Never vague phrases such as "sheds light on", "contributes to the literature" or "provides insights"; do not repeat the summary.
-- summary: 2-3 sentences: what the paper does, then its main findings. Give headline magnitudes with units and their comparison point when the text gives them ("raises employment by 4% relative to ..."). Start with the finding or the setting, never with "This paper", "The paper", "We" or "The authors", and do not restate the question or copy the abstract's sentences.
+- summary: 2-3 sentences: what the paper does, then its main findings. Give headline magnitudes with units and their comparison point when the text gives them ("raises employment by 4% relative to ..."). Start with the finding or the setting, never with "This paper", "The paper", "We" or "The authors", and do not restate the question.
 - conclusion: 1-2 sentences on the implications drawn in the conclusion excerpt; without an excerpt, the policy or theoretical implication stated in the abstract, or "" if there is none. Do not repeat the summary.
 - identification: at most 25 words. Empirical causal work: the design and the source of variation ("Staggered DiD exploiting the county-level rollout of X, 1995-2010"; "IV using rainfall shocks as instrument for income"). Structural or quantitative work: "Structural: " or "Quantitative: ", the model, and what it is estimated or calibrated on. Pure theory: "Theory: " and the type of model. Descriptive or measurement work: "Descriptive: " and what is measured. Econometric methods: "Econometric theory: " and the problem addressed.
 - data_detail: the main data sources named concretely (survey, registry, country, years) in at most 20 words; "" if none.
@@ -302,6 +303,26 @@ def _keys(value, allowed, limit):
         if item in allowed and item not in out:
             out.append(item)
     return out[:limit]
+
+
+COPY_LIMIT = 12  # consecutive words shared with the abstract or conclusion that reject an answer
+_WORD = re.compile(r'\w+')
+
+
+def copied_run(out, *sources, n=COPY_LIMIT):
+    """The first run of n or more consecutive words that a written field shares with the sources
+    (the abstract, the conclusion excerpt), or '' if there is none. Only the model's own words may
+    be published: the sources are copyrighted by their authors and publishers."""
+    words = [w for text in sources if text for w in [_WORD.findall(text.lower())]]
+    runs = {' '.join(ws[i:i + n]) for ws in words for i in range(len(ws) - n + 1)}
+    if not runs:
+        return ''
+    for key in ('q', 'contribution', 'summary', 'conclusion', 'ident', 'dataDetail'):
+        ws = _WORD.findall(str(out.get(key) or '').lower())
+        for i in range(len(ws) - n + 1):
+            if ' '.join(ws[i:i + n]) in runs:
+                return f"{key}: '{' '.join(ws[i:i + n])}'"
+    return ''
 
 
 def validate(raw, tax):

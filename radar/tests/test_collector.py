@@ -499,6 +499,26 @@ class Batch(unittest.TestCase):
             self.assertEqual(rb.Target(tmp).pending(), [])
             self.assertIn('HOW TO ANSWER', rb.instructions(TAX, ['wages']))
 
+    def test_import_rejects_answers_that_copy_the_abstract(self):
+        import radar_batch as rb
+        abstract = 'We exploit a reform that raised the minimum wage in half of the states to estimate employment effects for teenagers.'
+        with tempfile.TemporaryDirectory() as tmp:
+            store = cl.Store(Path(tmp))
+            for pid in ('W1', 'W2'):
+                store.add({'id': pid, 'journal': 'aer', 'title': 'Minimum Wages', 'published': '2026-10-01', 'added': '2026-11-10',
+                           'authors': [{'n': 'A'}], 'abstract': abstract, 'by': 'rules'})
+            store.save()
+            base = {'question': 'Do minimum wages cut teenage jobs?', 'contribution': 'C.', 'conclusion': '', 'fields': ['labour'],
+                    'methods': ['did'], 'identification': 'A reform in half of the states.', 'data_types': [], 'data_detail': '',
+                    'topics': [], 'geography': [], 'period': '', 'jel': []}
+            copied = {**base, 'summary': 'The paper exploits a reform that raised the minimum wage in half of the states to estimate employment effects.'}
+            own = {**base, 'summary': 'Teenage employment barely moves when half of the states raise their wage floor.'}
+            done, rejected, _ = rb.import_answers(rb.Target(tmp), TAX, {'W1': copied, 'W2': own}, 'claude-sonnet-5-5', {})
+            self.assertEqual(done, ['W2'])
+            self.assertIn('own words', rejected['W1'])
+            self.assertIn('summary', rejected['W1'])
+            self.assertEqual(enrich.copied_run({'summary': 'Raises wages.'}, ''), '', 'no source, nothing to compare')
+
     def test_dry_run_compares_a_model_on_papers_already_summarised(self):
         import radar_batch as rb
         with tempfile.TemporaryDirectory() as tmp:
